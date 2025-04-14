@@ -118,7 +118,7 @@ export default function VrmAvatar({
       groupRef.current.add(loadedVrmInstance.scene);
 
       if (onLoad) {
-        onLoad(groupRef);
+        onLoad(groupRef.current);
       }
 
       const animMixer = new THREE.AnimationMixer(loadedVrmInstance.scene);
@@ -224,10 +224,11 @@ export default function VrmAvatar({
         const moveDistance = currentSpeed * delta;
         const displacement = movementDirection.clone().normalize().multiplyScalar(moveDistance);
 
-      
+        // Appliquer le déplacement
         avatar.position.add(displacement);
 
-
+        // LOG AJOUTÉ : Vérifier la position après modification
+        console.log("[VrmAvatar] Position updated:", avatar.position.x, avatar.position.y, avatar.position.z)
     }
   });
 

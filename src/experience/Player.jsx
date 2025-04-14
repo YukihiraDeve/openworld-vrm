@@ -1,13 +1,18 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useContext, useCallback } from 'react';
 import VrmAvatar from '../components/VrmAvatar';
 import useKeyboardController from './controller/KeyboardController';
 import useMouseController from './controller/MouseController';
 import usePlayerMovement from '../hooks/usePlayerMovement';
 import FollowCamera from './camera/FollowCamera';
 import { MODELS, ANIMATIONS } from '../utils/const';
+import { MultiplayerContext } from './multiplayer/MultiplayerContext';
 
 export default function Player() {
-  const [avatarRef, setAvatarRef] = useState(null);
+  const [avatarLoadedRef, setAvatarLoadedRef] = useState(null);
+  const avatarObjectRef = useRef(null);
+
+  const { emitPlayerMove, emitPlayerAnimation } = useContext(MultiplayerContext);
+
   const {
     locomotion,
     movementDirection,
@@ -16,15 +21,19 @@ export default function Player() {
     cameraAngleRef,
     updateMovement,
     updateCameraAngleRef
-  } = usePlayerMovement();
+  } = usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarObjectRef);
 
   const keysPressed = useKeyboardController(cameraAngleRef, () => updateMovement(keysPressed));
   useMouseController(setCameraAngle);
 
-  // Mise à jour de la ref quand l'angle change
   useEffect(() => {
     updateCameraAngleRef();
   }, [cameraAngle, updateCameraAngleRef]);
+
+  const handleAvatarLoad = useCallback((ref) => {
+    avatarObjectRef.current = ref;
+    setAvatarLoadedRef(ref);
+  }, []);
 
   return (
     <>
@@ -37,10 +46,10 @@ export default function Player() {
         movementDirection={movementDirection}
         position={[0, -1, 0]} 
         scale={1}
-        onLoad={setAvatarRef}
+        onLoad={handleAvatarLoad}
       />
       
-      {avatarRef && <FollowCamera targetRef={avatarRef} angle={cameraAngle} />}
+      {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
     </>
   );
 }
