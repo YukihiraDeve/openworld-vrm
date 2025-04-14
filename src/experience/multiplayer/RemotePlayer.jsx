@@ -8,8 +8,8 @@ export default function RemotePlayer({ playerData }) {
     return null; 
   }
 
-  // TODO: Ajouter la gestion de la rotation lorsque le serveur l'enverra
-  // const rotation = playerData.rotation || [0, 0, 0]; // Exemple, adapter à la structure des données serveur
+  // Extrait la rotation du serveur, avec une valeur par défaut
+  const rotationData = playerData.rotation || { x: 0, y: 0, z: 0, w: 1 };
 
   // Assurez-vous que les données de position existent
   const position = playerData.position ? [playerData.position.x, playerData.position.y, playerData.position.z] : [0, -1, 0];
@@ -27,6 +27,8 @@ export default function RemotePlayer({ playerData }) {
       // La direction du mouvement n'est pas nécessaire ici, la position est directement mise à jour
       // movementDirection={/* Pas nécessaire pour les joueurs distants */} 
       position={position}
+      // Passe la rotation reçue au composant VrmAvatar
+      rotation={rotationData}
       scale={1}
       // La rotation sera appliquée directement au groupe si nécessaire
     />

@@ -89,6 +89,7 @@ export default function VrmAvatar({
   runSpeed = 4,      
   position = [0, 0, 0],
   scale = 1,
+  rotation = null,
   onLoad,
 }) {
   const groupRef = useRef(); 
@@ -212,23 +213,28 @@ export default function VrmAvatar({
     }
 
    
-    if (groupRef.current && vrmRef.current && movementDirection && movementDirection.lengthSq() > 0) {
+    if (groupRef.current && vrmRef.current) {
         const avatar = groupRef.current;
 
-     
-        const angle = Math.atan2(movementDirection.x, movementDirection.z);
-        const targetQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
-        avatar.quaternion.slerp(targetQuaternion, 0.1); 
+        if (rotation) {
+            // Joueur distant: Appliquer directement la rotation reçue
+            avatar.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+        } else if (movementDirection && movementDirection.lengthSq() > 0) {
+            // Joueur local: Calculer la rotation à partir de la direction
+            const angle = Math.atan2(movementDirection.x, movementDirection.z);
+            const targetQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+            avatar.quaternion.slerp(targetQuaternion, 0.1); 
 
-        const currentSpeed = locomotion === 'run' ? runSpeed : walkSpeed;
-        const moveDistance = currentSpeed * delta;
-        const displacement = movementDirection.clone().normalize().multiplyScalar(moveDistance);
+            // Déplacement (uniquement pour le joueur local, car la position distante est définie directement)
+            const currentSpeed = locomotion === 'run' ? runSpeed : walkSpeed;
+            const moveDistance = currentSpeed * delta;
+            const displacement = movementDirection.clone().normalize().multiplyScalar(moveDistance);
+            avatar.position.add(displacement);
 
-        // Appliquer le déplacement
-        avatar.position.add(displacement);
-
-        // LOG AJOUTÉ : Vérifier la position après modification
-        console.log("[VrmAvatar] Position updated:", avatar.position.x, avatar.position.y, avatar.position.z)
+            // LOG AJOUTÉ : Vérifier la position après modification
+            //console.log("[VrmAvatar] Position updated:", avatar.position.x, avatar.position.y, avatar.position.z)
+        }
+        // Note: La position des joueurs distants est définie via la prop `position`, pas besoin de la recalculer ici.
     }
   });
 
