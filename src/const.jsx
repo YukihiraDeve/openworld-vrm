@@ -9,7 +9,7 @@ export const ANIMATIONS = {
   'walking': '/assets/animations/Walking.fbx',
   'idle': '/assets/animations/Idle.fbx',
   'jump': '/assets/animations/Jump.fbx',
-  'run': '/assets/animations/Running.fbx',
+  'run': '/assets/animations/Running.fbx'
 };
 
 
