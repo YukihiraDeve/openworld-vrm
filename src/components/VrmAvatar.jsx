@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import * as THREE from 'three';
-import { mixamoVRMRigMap } from '../const'; 
+import { mixamoVRMRigMap } from '../utils/const'; 
 
 
 async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
