@@ -8,7 +8,7 @@ export default function Ground() {
       position={[0, -1, 0]}
       receiveShadow
     >
-      <meshStandardMaterial color="#ffffff" />
+      <meshStandardMaterial color="#654321" />
     </Plane>
   );
 }

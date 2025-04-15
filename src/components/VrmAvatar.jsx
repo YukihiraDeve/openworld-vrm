@@ -11,9 +11,8 @@ async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
   const loader = new FBXLoader();
   console.log(`[${animationName}] Chargement de : ${url}`); // Log URL
   const asset = await loader.loadAsync(url);
-  console.log(`[${animationName}] Asset chargé:`, asset); // Log asset
   const clip = THREE.AnimationClip.findByName(asset.animations, 'mixamo.com');
-  console.log(`[${animationName}] Clip trouvé:`, clip); 
+
 
   if (!clip) {
     console.error(`[${animationName}] Animation "mixamo.com" non trouvée dans ${url}`);
@@ -73,8 +72,6 @@ async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
   });
 
   const convertedClip = new THREE.AnimationClip(animationName, clip.duration, tracks);
-  console.log(`[${animationName}] Pistes converties (${tracks.length}):`, tracks); 
-  console.log(`[${animationName}] Clip converti:`, convertedClip); 
   return convertedClip;
 }
 

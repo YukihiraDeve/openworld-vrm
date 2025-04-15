@@ -62,13 +62,11 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
     if (!avatarRef?.current || !emitPlayerMove) return;
 
     // LOG: Vérifier avatarRef.current DIRECTEMENT
-    console.log("[usePlayerMovement useFrame] Logging avatarRef.current directly:", avatarRef.current);
 
     const avatar = avatarRef.current;
 
     // LOG: Vérifier la variable 'avatar' après assignation
-    console.log("[usePlayerMovement useFrame] Logging the 'avatar' variable after assignment:", avatar);
-
+  
     // Tentative d'accès aux propriétés
     let currentPosition = null;
     let currentQuaternion = null;
@@ -76,11 +74,9 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
       currentPosition = avatar?.position;
       currentQuaternion = avatar?.quaternion;
       // LOG: Afficher les propriétés si accessibles
-      console.log("[usePlayerMovement useFrame] Accessed position:", currentPosition);
-      console.log("[usePlayerMovement useFrame] Accessed quaternion:", currentQuaternion);
+
     } catch (e) {
-      console.error("[usePlayerMovement useFrame] Error accessing position/quaternion:", e);
-      console.error("[usePlayerMovement useFrame] Object causing error:", avatar);
+ 
     }
 
     if (!currentPosition || !currentQuaternion) {
@@ -103,8 +99,7 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
 
     if (positionChanged || rotationChanged) {
       // LOG AJOUTÉ : Vérifier la position lue par ce hook
-      console.log("[usePlayerMovement] Changement détecté, émission de :", currentPosition.x, currentPosition.y, currentPosition.z);
-      emitPlayerMove({
+    emitPlayerMove({
         position: { x: currentPosition.x, y: currentPosition.y, z: currentPosition.z },
         rotation: { x: currentQuaternion.x, y: currentQuaternion.y, z: currentQuaternion.z, w: currentQuaternion.w }
       });

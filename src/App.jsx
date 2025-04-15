@@ -1,4 +1,4 @@
-import React, { Suspense, useContext } from 'react';
+import React, { Suspense, useContext, useState } from 'react';
 import { Environment } from '@react-three/drei';
 import CustomCanvas from './components/CustomCanvas';
 import Ground from './components/World/Ground';
@@ -7,6 +7,7 @@ import Player from './experience/Player';
 import MultiplayerProvider from './experience/multiplayer/MultiplayerProvider';
 import { MultiplayerContext } from './experience/multiplayer/MultiplayerContext';
 import RemotePlayer from './experience/multiplayer/RemotePlayer';
+import AssetLoader from './components/AssetLoader';
 
 function GameContent() {
   const { players, localPlayerId } = useContext(MultiplayerContext);
@@ -14,8 +15,8 @@ function GameContent() {
   return (
     <>
       <Lighting />
-      <Ground />
       <Suspense fallback={null}>
+        <Ground />
         <Player />
         {players && Object.entries(players).map(([id, playerData]) => {
           if (id === localPlayerId) return null;
@@ -28,12 +29,16 @@ function GameContent() {
 }
 
 function App() {
+  const [assetsLoaded, setAssetsLoaded] = useState(false);
+
   return (
-    <MultiplayerProvider>
-      <CustomCanvas>
-        <GameContent />
-      </CustomCanvas>
-    </MultiplayerProvider>
+    <AssetLoader onLoadComplete={() => setAssetsLoaded(true)}>
+      <MultiplayerProvider initialConnectionDelay={assetsLoaded ? 0 : null}>
+        <CustomCanvas>
+          <GameContent />
+        </CustomCanvas>
+      </MultiplayerProvider>
+    </AssetLoader>
   );
 }
 

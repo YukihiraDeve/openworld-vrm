@@ -5,13 +5,16 @@ import { MultiplayerContext } from './MultiplayerContext';
 // Remplacez par l'URL de votre serveur Socket.IO
 const SOCKET_SERVER_URL = 'http://localhost:3001'; 
 
-export default function MultiplayerProvider({ children }) {
+export default function MultiplayerProvider({ children, initialConnectionDelay = null }) {
   const [socket, setSocket] = useState(null);
   const [players, setPlayers] = useState({}); // { id: { position, rotation, locomotion, ... }, ... }
   const localPlayerIdRef = useRef(null);
 
   // Connexion et déconnexion
   useEffect(() => {
+    // Si initialConnectionDelay est null, ne pas se connecter encore
+    if (initialConnectionDelay === null) return;
+    
     const newSocket = io(SOCKET_SERVER_URL);
     setSocket(newSocket);
 
@@ -35,7 +38,7 @@ export default function MultiplayerProvider({ children }) {
     return () => {
       newSocket.disconnect();
     };
-  }, []);
+  }, [initialConnectionDelay]);
 
   // Fonction pour émettre le mouvement du joueur local
   const emitPlayerMove = useCallback((movementData) => {
