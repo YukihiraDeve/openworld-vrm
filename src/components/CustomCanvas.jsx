@@ -33,12 +33,13 @@ export default function CustomCanvas({ children }) {
         <color attach="background" args={['#87CEEB']} />
         <ambientLight intensity={0.6} />
         <primitive object={directionalLight} />
+        
         <Suspense fallback={null}>
           {children}
           <GrassField 
-            density={1000} 
-            width={100} 
-            height={100} 
+            density={100000} 
+            width={10} 
+            height={10} 
             position={[0, -1, 0]} 
           />
         </Suspense>
