@@ -28,7 +28,10 @@ const vertexShader = `
      return (sin(p.x * 2.0 + time * 0.8) + cos(p.y * 2.0 - time * 0.5)) * 0.5; // Outputs roughly -1 to 1
   }
 
+
   void main() {
+
+    
     vUv = uv;
     vColor = color;
 
@@ -67,6 +70,7 @@ const vertexShader = `
     pos.z += windEffect * 0.6;
     */
 
+
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
   }
 `;
@@ -85,6 +89,7 @@ const fragmentShader = `
     
     // Éclairage de base
     float shadow = mix(0.7, 1.0, noise.r);
+    
     float light = 0.3 + 0.7 * vColor.r;
 
 
@@ -194,12 +199,16 @@ export default function GrassField({
         time: { value: 0 },
         grassTexture: { value: grassTexture },
         noiseTexture: { value: noiseTexture },
+        ...THREE.UniformsLib.lights,
+        ...THREE.UniformsLib.shadows,
       },
       vertexShader,
       fragmentShader,
       side: THREE.DoubleSide,
       vertexColors: true,
       transparent: true,
+      lights: true,
+      shadows: true,
     });
   }, [grassTexture, noiseTexture]);
   
@@ -217,10 +226,11 @@ export default function GrassField({
     <>
       {/* Herbe animée */}
       <mesh 
-      ref={meshRef}
+        ref={meshRef}
         position={position}
         geometry={geometry}
         material={material}
+        receiveShadow
       />
       
       {/* Plan invisible qui reçoit les ombres */}
@@ -229,10 +239,9 @@ export default function GrassField({
         position={[position[0], position[1] + 0.01, position[2]]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
-        castShadow
       >
         <planeGeometry args={[width, height]} />
-        <shadowMaterial opacity={0.5} transparent />
+        <shadowMaterial opacity={0.7} transparent />
       </mesh>
     </>
   );

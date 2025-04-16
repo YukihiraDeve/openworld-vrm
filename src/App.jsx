@@ -1,5 +1,5 @@
 import React, { Suspense, useContext, useState } from 'react';
-import { Environment } from '@react-three/drei';
+import * as THREE from 'three';
 import CustomCanvas from './components/CustomCanvas';
 import Ground from './components/World/Ground';
 import Lighting from './components/World/Lighting';
@@ -9,12 +9,12 @@ import { MultiplayerContext } from './experience/multiplayer/MultiplayerContext'
 import RemotePlayer from './experience/multiplayer/RemotePlayer';
 import AssetLoader from './components/AssetLoader';
 
-function GameContent() {
+function GameContent({ sunPosition }) {
   const { players, localPlayerId } = useContext(MultiplayerContext);
 
   return (
     <>
-      <Lighting />
+      <Lighting sunPosition={sunPosition} />
       <Suspense fallback={null}>
         <Ground />
         <Player />
@@ -22,7 +22,6 @@ function GameContent() {
           if (id === localPlayerId) return null;
           return <RemotePlayer key={id} playerData={playerData} />;
         })}
-        <Environment preset="sunset" />
       </Suspense>
     </>
   );
@@ -30,15 +29,29 @@ function GameContent() {
 
 function App() {
   const [assetsLoaded, setAssetsLoaded] = useState(false);
+  const [sunPosition, setSunPosition] = useState(new THREE.Vector3(0, 10, -10));
+  const [isDayNightCycleActive, setIsDayNightCycleActive] = useState(false);
 
   return (
-    <AssetLoader onLoadComplete={() => setAssetsLoaded(true)}>
-      <MultiplayerProvider initialConnectionDelay={assetsLoaded ? 0 : null}>
-        <CustomCanvas>
-          <GameContent />
-        </CustomCanvas>
-      </MultiplayerProvider>
-    </AssetLoader>
+    <>
+      <div style={{ position: 'absolute', top: '10px', left: '10px', zIndex: 100 }}>
+        <button onClick={() => setIsDayNightCycleActive(prev => !prev)}>
+          {isDayNightCycleActive ? 'Arrêter Cycle Jour/Nuit' : 'Démarrer Cycle Jour/Nuit'}
+        </button>
+      </div>
+
+      <AssetLoader onLoadComplete={() => setAssetsLoaded(true)}>
+        <MultiplayerProvider initialConnectionDelay={assetsLoaded ? 0 : null}>
+          <CustomCanvas
+            sunPosition={sunPosition}
+            setSunPosition={setSunPosition}
+            isDayNightCycleActive={isDayNightCycleActive}
+          >
+            <GameContent sunPosition={sunPosition} />
+          </CustomCanvas>
+        </MultiplayerProvider>
+      </AssetLoader>
+    </>
   );
 }
 

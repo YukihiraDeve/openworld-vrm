@@ -14,12 +14,14 @@
     "@react-three/fiber": "^8.13.6",
     "colyseus.js": "^0.16.15",
     "cors": "^2.8.5",
+    "drei": "^2.2.21",
     "express": "^5.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
-    "three": "^0.164.1"
+    "three": "^0.164.1",
+    "three-extend-material": "^1.0.0"
   },
   "devDependencies": {
     "@colyseus/monitor": "^0.16.7",

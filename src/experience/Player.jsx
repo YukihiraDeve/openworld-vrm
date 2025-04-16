@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useContext, useCallback } from 'react';
+import { useFrame } from '@react-three/fiber';
 import VrmAvatar from '../components/VrmAvatar';
 import useKeyboardController from './controller/KeyboardController';
 import useMouseController from './controller/MouseController';
@@ -35,6 +36,30 @@ export default function Player() {
     setAvatarLoadedRef(ref);
   }, []);
 
+
+  useFrame(() => {
+    if (avatarObjectRef.current) {
+      // Faire suivre la cible de la lumière au personnage
+      const playerPosition = avatarObjectRef.current.position;
+      const directionalLights = [];
+      
+      // Trouver toutes les lumières directionnelles dans la scène
+      avatarObjectRef.current.parent.traverse((object) => {
+        if (object.isDirectionalLight) {
+          directionalLights.push(object);
+        }
+      });
+      
+      // Si des lumières sont trouvées, mettre à jour leurs cibles
+      if (directionalLights.length > 0) {
+        directionalLights.forEach(light => {
+          light.target.position.copy(playerPosition);
+          light.target.updateMatrixWorld();
+        });
+      }
+    }
+  });
+
   return (
     <>
       <VrmAvatar 
@@ -47,6 +72,8 @@ export default function Player() {
         position={[0, -1, 0]} 
         scale={1}
         onLoad={handleAvatarLoad}
+        castShadow={true} // Assurez-vous que ceci est bien défini
+        receiveShadow={true} // Assurez-vous que ceci est bien défini
       />
       
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
