@@ -1,21 +1,24 @@
 import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Suspense } from 'react';
-import GrassField from './World/Grass';
-import Sky from './World/Sky';
+
+import GrassGPT4 from './World/GrassGPT4';
 import EnvironmentController from './EnvironmentController';
+import SkyWithClouds from './World/Sky';
 
 export default function CustomCanvas({ children, sunPosition, setSunPosition, isDayNightCycleActive }) {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
-        <Canvas
-          camera={{ position: [0, 5, 10], fov: 50 }}
-          shadows={{ type: THREE.PCFSoftShadowMap }} // Meilleure qualité d'ombre
-          gl={{ antialias: true }}
-        >
+      <Canvas
+        camera={{ position: [0, 5, 10], fov: 50 }}
+        shadows={{ type: THREE.PCFSoftShadowMap }}
+        gl={{ antialias: true }}
+      >
+        {/* Sky and procedural clouds */}
+        <SkyWithClouds sunPosition={sunPosition} />
+
         <Suspense fallback={null}>
-          <Sky sunPosition={sunPosition} />
-          <GrassField 
+          <GrassGPT4 
             density={100000} 
             width={5} 
             height={5} 
@@ -27,6 +30,7 @@ export default function CustomCanvas({ children, sunPosition, setSunPosition, is
             isActive={isDayNightCycleActive}
           />
         </Suspense>
+
         {children}
       </Canvas>
     </div>

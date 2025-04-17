@@ -11,14 +11,7 @@ export default function Ground() {
       >
         <meshStandardMaterial color="#172F00" />
       </Plane>
-      
-      <Box 
-        args={[1, 1, 1]} 
-        position={[0, 2, 0]}
-        castShadow
-      >
-        <meshStandardMaterial color="#1E88E5" />
-      </Box>
+  
     </>
   );
 }
