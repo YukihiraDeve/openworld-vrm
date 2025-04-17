@@ -17,8 +17,8 @@ export default function CustomCanvas({ children, sunPosition, setSunPosition, is
           <Sky sunPosition={sunPosition} />
           <GrassField 
             density={100000} 
-            width={50} 
-            height={50} 
+            width={5} 
+            height={5} 
             position={[0, -1, 0]} 
           />
           <EnvironmentController
