@@ -1,51 +1,44 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import * as THREE from 'three';
-import { Sky, Cloud } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
+import { TEXTURE_BASE_URL, SKY_FACES } from '../../utils/const';
+// n'est pas bien, je vais l'enlever
 
-/**
- * SkyWithClouds component
- * Renders a deep summer sky gradient with fluffy, realistic clouds.
- * @param {{ sunPosition: THREE.Vector3 }} props
- */
-export default function SkyWithClouds({ sunPosition = new THREE.Vector3(0, 20, -20) }) {
-  // Generate random cloud configurations for fluffy shapes
-  const cloudConfigs = useMemo(() => {
-    const configs = [];
-    for (let i = 0; i < 5; i++) {
-      configs.push({
-        position: [
-          (Math.random() - 0.5) * 300,   // X spread
-          Math.random() * 20 + 15,         // Y height 15–35
-          (Math.random() - 0.5) * 300    // Z spread
-        ],
-        opacity: Math.random() * 0.2 + 0.8, // Bright white
-        speed: Math.random() * 0.01 + 0.005, // Very slow drift
-        width: Math.random() * 150 + 150,   // Width 150–300
-        depth: Math.random() * 30 + 30,     // Depth 30–60
-        segments: Math.floor(Math.random() * 30 + 30) // Segments 30–60 (smooth soft edges)
-      });
-    }
-    return configs;
-  }, []);
+const Sky = () => {
+  const { scene } = useThree();
+  const [isLoaded, setIsLoaded] = useState(false);
 
-  const sunArray = useMemo(() => [sunPosition.x, sunPosition.y, sunPosition.z], [sunPosition]);
+  useEffect(() => {
+    // Utiliser directement un CubeTextureLoader
+    const loader = new THREE.CubeTextureLoader();
+    
+    // Ne pas utiliser le chemin "/public" - commencer par "assets/"
+    const urls = SKY_FACES.map(name => `assets/textures/${name}`);
+    
+    // Ajouter des gestionnaires d'erreurs explicites
+    loader.load(
+      urls,
+      (texture) => {
+        scene.background = texture;
+        setIsLoaded(true);
+      },
+      undefined, // progression
+      (error) => {
+        console.error("Erreur lors du chargement des textures skybox:", error);
+        console.error("URLs tentées:", urls);
+      }
+    );
+    
+    // Cleanup function
+    return () => {
+      if (isLoaded) {
+        scene.background = null;
+      }
+    };
+  }, [scene]);
 
-  return (
-    <>
-      {/* Deep blue summer sky gradient */}
-      <Sky
-        sunPosition={sunArray}
-        turbidity={6}            // Moderate haze for richer gradient
-        rayleigh={2.5}           // Enhanced blue scattering
-        mieCoefficient={0.02}    // Slight atmospheric dust
-        mieDirectionalG={0.7}     // Light directional bias
-        distance={4500}
-      />
+  // Ce composant ne rend rien directement, il modifie juste scene.background
+  return null;
+};
 
-      {/* Fluffy, realistic clouds */}
-      {cloudConfigs.map((cfg, idx) => (
-        <Cloud key={idx} {...cfg} />
-      ))}
-    </>
-  );
-}
+export default Sky;

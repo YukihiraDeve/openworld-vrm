@@ -2,9 +2,9 @@ import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Suspense } from 'react';
 
-import GrassGPT4 from './World/GrassGPT4';
+import GrassGPT4 from './World/GrassWithShadersUpdate';
 import EnvironmentController from './EnvironmentController';
-import SkyWithClouds from './World/Sky';
+import Sky from './World/Sky';
 
 export default function CustomCanvas({ children, sunPosition, setSunPosition, isDayNightCycleActive }) {
   return (
@@ -15,8 +15,7 @@ export default function CustomCanvas({ children, sunPosition, setSunPosition, is
         gl={{ antialias: true }}
       >
         {/* Sky and procedural clouds */}
-        <SkyWithClouds sunPosition={sunPosition} />
-
+        <Sky />
         <Suspense fallback={null}>
           <GrassGPT4 
             density={100000} 
