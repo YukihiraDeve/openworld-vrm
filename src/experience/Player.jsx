@@ -69,7 +69,7 @@ export default function Player() {
         runAnimationUrl={ANIMATIONS['run']}
         locomotion={locomotion}
         movementDirection={movementDirection}
-        position={[0, -1, 0]} 
+        position={[0, 0, 0]} 
         scale={1}
         onLoad={handleAvatarLoad}
         castShadow={true} // Assurez-vous que ceci est bien défini

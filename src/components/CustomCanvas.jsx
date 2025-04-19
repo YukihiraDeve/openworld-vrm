@@ -3,10 +3,10 @@ import * as THREE from 'three';
 import { Suspense } from 'react';
 
 import GrassGPT4 from './World/GrassWithShadersUpdate';
-import EnvironmentController from './EnvironmentController';
+
 import Sky from './World/Sky';
 
-export default function CustomCanvas({ children, sunPosition, setSunPosition, isDayNightCycleActive }) {
+export default function CustomCanvas({ children }) {
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
       <Canvas
@@ -15,19 +15,17 @@ export default function CustomCanvas({ children, sunPosition, setSunPosition, is
         gl={{ antialias: true }}
       >
         {/* Sky and procedural clouds */}
-        <Sky />
+        <Sky ambientIntensity={0.7} />
+
+
         <Suspense fallback={null}>
           <GrassGPT4 
             density={100000} 
-            width={5} 
-            height={5} 
-            position={[0, -1, 0]} 
+            width={50} 
+            height={50} 
+            position={[0, 0 , 0]} 
           />
-          <EnvironmentController
-            sunPosition={sunPosition}
-            setSunPosition={setSunPosition}
-            isActive={isDayNightCycleActive}
-          />
+
         </Suspense>
 
         {children}

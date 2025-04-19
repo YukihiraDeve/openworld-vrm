@@ -98,7 +98,7 @@ export default function GrassField({
   density = 1.5,
   width = 100,
   height = 100,
-  position = [0, -1, 0]
+  position = [0, 0, 0]
 }) {
   const meshRef = useRef();
   

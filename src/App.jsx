@@ -30,14 +30,11 @@ function GameContent({ sunPosition }) {
 function App() {
   const [assetsLoaded, setAssetsLoaded] = useState(false);
   const [sunPosition, setSunPosition] = useState(new THREE.Vector3(0, 10, -10));
-  const [isDayNightCycleActive, setIsDayNightCycleActive] = useState(false);
 
   return (
     <>
       <div style={{ position: 'absolute', top: '10px', left: '10px', zIndex: 100 }}>
-        <button onClick={() => setIsDayNightCycleActive(prev => !prev)}>
-          {isDayNightCycleActive ? 'Arrêter Cycle Jour/Nuit' : 'Démarrer Cycle Jour/Nuit'}
-        </button>
+
       </div>
 
       <AssetLoader onLoadComplete={() => setAssetsLoaded(true)}>
@@ -45,7 +42,6 @@ function App() {
           <CustomCanvas
             sunPosition={sunPosition}
             setSunPosition={setSunPosition}
-            isDayNightCycleActive={isDayNightCycleActive}
           >
             <GameContent sunPosition={sunPosition} />
           </CustomCanvas>

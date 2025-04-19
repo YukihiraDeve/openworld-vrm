@@ -20,7 +20,7 @@ export default function Lighting({ sunPosition }) {
     return (
       <>
         {/* Augmenter légèrement l'intensité ambiante */}
-        <ambientLight intensity={0.6} />
+      
         <directionalLight
           ref={lightRef} // Référence pour mettre à jour la position
           // position={[10, 10, 5]} // Position gérée par useEffect

@@ -67,5 +67,3 @@ export const mixamoVRMRigMap = {
   mixamorigRightToeBase: 'rightToes',
 };
 
-export const TEXTURE_BASE_URL = 'assets/textures/';
-export const SKY_FACES = ['skyPX.png', 'skyNX.png', 'skyPY.png', 'skyNY.png', 'skyPZ.png', 'skyNZ.png'];
