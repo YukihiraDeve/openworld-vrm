@@ -2,7 +2,7 @@ import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Suspense } from 'react';
 
-import GrassGPT4 from './World/GrassWithShadersUpdate';
+import Grass from './World/GrassWithShadersUpdate';
 
 import Sky from './World/Sky';
 
@@ -15,14 +15,21 @@ export default function CustomCanvas({ children }) {
         gl={{ antialias: true }}
       >
         {/* Sky and procedural clouds */}
-        <Sky ambientIntensity={0.7} />
+        <Sky
+          sunPosition={[5, 12, -8]}
+          sunSize={1}
+          sunColor='#fff3a0'
+          ambientIntensity={0.65}
+          preset='noon'
+          
+        />
 
 
         <Suspense fallback={null}>
-          <GrassGPT4 
+          <Grass
             density={100000} 
-            width={50} 
-            height={50} 
+            width={5} 
+            height={5} 
             position={[0, 0 , 0]} 
           />
 

@@ -7,7 +7,7 @@ import { useTexture } from '@react-three/drei';
 export default function GrassGPT4({
   density = 10000,
   width = 50,
-  height = 50,
+  height = 5,
   position = [0, -1, 0]
 }) {
   const meshRef = useRef();
@@ -34,8 +34,8 @@ export default function GrassGPT4({
     const colors = [];
     const indices = [];
 
-    const bladesWidth = 0.1;
-    const bladesHeight = 0.5;
+    const bladesWidth = 0.05;
+    const bladesHeight = 0.2;
     const grassCount = Math.floor(density);
 
     for (let i = 0; i < grassCount; i++) {

@@ -14,7 +14,7 @@ function GameContent({ sunPosition }) {
 
   return (
     <>
-      <Lighting sunPosition={sunPosition} />
+      z
       <Suspense fallback={null}>
         <Ground />
         <Player />
