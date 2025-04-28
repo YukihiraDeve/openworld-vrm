@@ -29,7 +29,6 @@ export default function useMouseController(setCameraAngle) {
       setCameraAngle(prevAngle => {
         const horizontal = prevAngle.horizontal - deltaX * 0.005;
         let vertical = prevAngle.vertical - deltaY * 0.005;
-        vertical = Math.max(0.1, Math.min(Math.PI / 2 - 0.1, vertical));
         return { horizontal, vertical };
       });
 
