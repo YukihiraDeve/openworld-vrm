@@ -43,54 +43,15 @@ function LoadingScreen({ progress }) {
 }
 
 export default function AssetLoader({ children, onLoadComplete }) {
-  const [loading, setLoading] = useState(true);
-  const [progress, setProgress] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(100);
 
   useEffect(() => {
-    const totalAssets = Object.keys(MODELS).length + Object.keys(ANIMATIONS).length;
-    let loadedAssets = 0;
-
-    // Fonction pour mettre à jour la progression
-    const updateProgress = () => {
-      loadedAssets++;
-      setProgress((loadedAssets / totalAssets) * 100);
-      
-      if (loadedAssets === totalAssets) {
-        setTimeout(() => {
-          setLoading(false);
-          if (onLoadComplete) onLoadComplete();
-        }, 500); // Petit délai pour assurer que tout est prêt
-      }
-    };
-
-    // Préchargement des modèles VRM
-    const gltfLoader = new GLTFLoader();
-    gltfLoader.register((parser) => new VRMLoaderPlugin(parser));
-    
-    Object.values(MODELS).forEach(modelUrl => {
-      gltfLoader.load(modelUrl, 
-        () => updateProgress(),
-        undefined, // Progression (optionnel)
-        (error) => console.error(`Erreur lors du chargement du modèle ${modelUrl}:`, error)
-      );
-    });
-
-    // Préchargement des animations FBX
-    const fbxLoader = new FBXLoader();
-    
-    Object.values(ANIMATIONS).forEach(animUrl => {
-      fbxLoader.load(animUrl,
-        () => updateProgress(),
-        undefined, // Progression (optionnel)
-        (error) => console.error(`Erreur lors du chargement de l'animation ${animUrl}:`, error)
-      );
-    });
-
+    if (onLoadComplete) onLoadComplete();
   }, [onLoadComplete]);
 
   return (
     <>
-      {loading && <LoadingScreen progress={progress} />}
       {children}
     </>
   );

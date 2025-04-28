@@ -1,12 +1,17 @@
 import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
-import { Suspense } from 'react';
-
+import { Suspense, useContext } from 'react';
+import { Physics, RigidBody, CapsuleCollider } from '@react-three/rapier';
+import Ground from './World/Ground';
+import Player from '../experience/Player';
+import { MultiplayerContext } from '../experience/multiplayer/MultiplayerContext';
+import RemotePlayer from '../experience/multiplayer/RemotePlayer';
 import Grass from './World/GrassWithShadersUpdate';
-
 import Sky from './World/Sky';
 
-export default function CustomCanvas({ children }) {
+export default function CustomCanvas({ sunPosition, setSunPosition }) {
+  const { players, localPlayerId } = useContext(MultiplayerContext);
+
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
       <Canvas
@@ -21,9 +26,7 @@ export default function CustomCanvas({ children }) {
           sunColor='#fff3a0'
           ambientIntensity={0.65}
           preset='noon'
-          
         />
-
 
         <Suspense fallback={null}>
           <Grass
@@ -32,10 +35,21 @@ export default function CustomCanvas({ children }) {
             height={5} 
             position={[0, 0 , 0]} 
           />
-
         </Suspense>
 
-        {children}
+        
+          <Physics debug={true}>
+            <Ground />
+            <RigidBody colliders="trimesh">
+              <Player />
+              <CapsuleCollider args={[0.8, 0.4]} lockRotation={true}/>
+            </RigidBody>
+            {players && Object.entries(players).map(([id, playerData]) => {
+              if (id === localPlayerId) return null;
+              return <RemotePlayer key={id} playerData={playerData} />;
+            })}
+          </Physics>
+       
       </Canvas>
     </div>
   );

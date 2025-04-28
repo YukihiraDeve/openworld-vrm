@@ -5,6 +5,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import * as THREE from 'three';
 import { mixamoVRMRigMap } from '../utils/const'; 
+import { RigidBody, CapsuleCollider } from '@react-three/rapier';
 
 
 async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
@@ -236,5 +237,9 @@ export default function VrmAvatar({
   });
 
   // Retourne le groupe qui contient le VRM
-  return <group ref={groupRef} position={position} scale={scale} dispose={null} />;
+  return (
+  <>
+    <group ref={groupRef} position={position} scale={scale} dispose={null} />;
+  </>
+  )
 }

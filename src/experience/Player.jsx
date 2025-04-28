@@ -7,7 +7,7 @@ import usePlayerMovement from '../hooks/usePlayerMovement';
 import FollowCamera from './camera/FollowCamera';
 import { MODELS, ANIMATIONS } from '../utils/const';
 import { MultiplayerContext } from './multiplayer/MultiplayerContext';
-
+import { RigidBody, CapsuleCollider } from '@react-three/rapier';
 export default function Player() {
   const [avatarLoadedRef, setAvatarLoadedRef] = useState(null);
   const avatarObjectRef = useRef(null);
@@ -62,6 +62,8 @@ export default function Player() {
 
   return (
     <>
+    
+    
       <VrmAvatar 
         vrmUrl={MODELS['WomanSkirtCharacter']} 
         idleAnimationUrl={ANIMATIONS['breathing-idle']}
@@ -69,14 +71,16 @@ export default function Player() {
         runAnimationUrl={ANIMATIONS['run']}
         locomotion={locomotion}
         movementDirection={movementDirection}
-        position={[0, 0, 0]} 
         scale={1}
         onLoad={handleAvatarLoad}
         castShadow={true} // Assurez-vous que ceci est bien défini
         receiveShadow={true} // Assurez-vous que ceci est bien défini
+        capsuleCollider={true}
       />
+z
       
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
+      
     </>
   );
 }
