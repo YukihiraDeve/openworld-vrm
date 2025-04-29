@@ -40,10 +40,7 @@ export default function CustomCanvas({ sunPosition, setSunPosition }) {
         
           <Physics debug={true}>
             <Ground />
-            <RigidBody colliders="trimesh">
-              <Player />
-              <CapsuleCollider args={[0.8, 0.4]} lockRotation={true}/>
-            </RigidBody>
+            <Player />
             {players && Object.entries(players).map(([id, playerData]) => {
               if (id === localPlayerId) return null;
               return <RemotePlayer key={id} playerData={playerData} />;

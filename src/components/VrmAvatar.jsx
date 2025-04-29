@@ -88,6 +88,7 @@ export default function VrmAvatar({
   position = [0, 0, 0],
   scale = 1,
   rotation = null,
+  modelDirectionOffset = 0,
   onLoad,
 }) {
   const groupRef = useRef(); 
@@ -219,7 +220,7 @@ export default function VrmAvatar({
             avatar.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
         } else if (movementDirection && movementDirection.lengthSq() > 0) {
             // Joueur local: Calculer la rotation à partir de la direction
-            const angle = Math.atan2(movementDirection.x, movementDirection.z);
+            const angle = Math.atan2(movementDirection.x, movementDirection.z) + modelDirectionOffset;
             const targetQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
             avatar.quaternion.slerp(targetQuaternion, 0.1); 
 

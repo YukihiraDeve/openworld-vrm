@@ -1,6 +1,6 @@
 import React from 'react';
 import VrmAvatar from '../../components/VrmAvatar';
-import { MODELS, ANIMATIONS } from '../../utils/const'; // Assurez-vous que le chemin est correct
+import { MODELS, ANIMATIONS, MODEL_DIRECTION_OFFSETS } from '../../utils/const'; // Assurez-vous que le chemin est correct
 
 // Ce composant recevra les données d'un joueur distant et affichera son avatar
 export default function RemotePlayer({ playerData }) {
@@ -14,12 +14,17 @@ export default function RemotePlayer({ playerData }) {
   // Assurez-vous que les données de position existent
   const position = playerData.position ? [playerData.position.x, playerData.position.y, playerData.position.z] : [0, -1, 0];
   const locomotion = playerData.locomotion || 'idle';
+  
+  // Utiliser le modèle du joueur distant s'il est spécifié, sinon utiliser un modèle par défaut
+  const playerModel = playerData.model || 'WomanSkirtCharacter';
+  
+  // Obtenir le décalage d'orientation pour le modèle du joueur distant
+  const modelDirectionOffset = MODEL_DIRECTION_OFFSETS[playerModel] || 0;
 
   return (
     <VrmAvatar
-      // Chaque joueur distant pourrait avoir un modèle différent à l'avenir
-      // Pour l'instant, on utilise le même modèle que le joueur local
-      vrmUrl={MODELS['WomanSkirtCharacter']} 
+      // Utiliser le modèle spécifié pour le joueur distant
+      vrmUrl={MODELS[playerModel]} 
       idleAnimationUrl={ANIMATIONS['breathing-idle']}
       walkAnimationUrl={ANIMATIONS['walking']}
       runAnimationUrl={ANIMATIONS['run']}
@@ -30,6 +35,7 @@ export default function RemotePlayer({ playerData }) {
       // Passe la rotation reçue au composant VrmAvatar
       rotation={rotationData}
       scale={1}
+      modelDirectionOffset={modelDirectionOffset} // Ajouter le décalage d'orientation
       // La rotation sera appliquée directement au groupe si nécessaire
     />
   );
