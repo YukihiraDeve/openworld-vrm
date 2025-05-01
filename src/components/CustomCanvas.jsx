@@ -1,7 +1,7 @@
 import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
-import { Suspense, useContext } from 'react';
-import { Physics, RigidBody, CapsuleCollider } from '@react-three/rapier';
+import { Suspense, useContext, useMemo } from 'react';
+import { Physics } from '@react-three/rapier';
 import Ground from './World/Ground';
 import Player from '../experience/Player';
 import { MultiplayerContext } from '../experience/multiplayer/MultiplayerContext';
@@ -11,6 +11,9 @@ import Sky from './World/Sky';
 
 export default function CustomCanvas({ sunPosition, setSunPosition }) {
   const { players, localPlayerId } = useContext(MultiplayerContext);
+  
+  // Créer un identifiant unique pour le joueur local
+  const playerKey = useMemo(() => "local-player-" + Math.random().toString(36).substring(2, 9), []);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
@@ -37,15 +40,25 @@ export default function CustomCanvas({ sunPosition, setSunPosition }) {
           />
         </Suspense>
 
-        
-          <Physics debug={true}>
-            <Ground />
-            <Player />
-            {players && Object.entries(players).map(([id, playerData]) => {
-              if (id === localPlayerId) return null;
-              return <RemotePlayer key={id} playerData={playerData} />;
-            })}
-          </Physics>
+        {/* Physics avec gravité configurée */}
+        <Physics 
+          gravity={[0, -9.81, 0]} 
+          debug={false}
+          interpolate={true}
+          colliders={false}
+        >
+          <Ground />
+          
+          {/* Player avec son propre RigidBody géré dans VrmAvatar */}
+          <Player />
+          
+          {/* Joueurs distants */}
+          {players && Object.entries(players).map(([id, playerData]) => {
+            if (id === localPlayerId) return null;
+            return <RemotePlayer key={id} playerData={playerData} />;
+          })}
+          
+        </Physics>
        
       </Canvas>
     </div>

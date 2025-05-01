@@ -9,17 +9,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@pixiv/three-vrm": "^2.0.11",
+    "@dimforge/rapier3d": "^0.16.0",
+    "@pixiv/three-vrm": "^3.4.0",
     "@pixiv/three-vrm-springbone": "^3.4.0",
-    "@react-three/drei": "^9.108.1",
-    "@react-three/fiber": "^8.13.6",
+    "@react-three/drei": "^10.0.7",
+    "@react-three/fiber": "^9.1.2",
     "@react-three/rapier": "^2.1.0",
-    "colyseus.js": "^0.16.15",
+    "colyseus.js": "^0.16.16",
     "cors": "^2.8.5",
     "drei": "^2.2.21",
     "express": "^5.1.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "leva": "^0.10.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
     "simplex-noise": "^4.0.3",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
@@ -28,7 +30,7 @@
   },
   "devDependencies": {
     "@colyseus/monitor": "^0.16.7",
-    "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.3.1"
+    "@vitejs/plugin-react": "^4.4.1",
+    "vite": "^6.3.4"
   }
 }

@@ -1,8 +1,7 @@
 export const MODELS = {
   'WomanSkirtCharacter': '/assets/models/hair.vrm',
   'Newon': '/assets/models/newone.vrm',
-  'xcc': '/assets/models/xcc.vrm',
-  'aaa': '/assets/models/aaa.vrm',
+  'Man': '/assets/models/Man.vrm',
 };
 
 // Configuration des décalages d'orientation pour chaque modèle VRM
@@ -10,7 +9,7 @@ export const MODELS = {
 export const MODEL_DIRECTION_OFFSETS = {
   'WomanSkirtCharacter': 0,          // Modèle de référence (pas de décalage)
   'Newon': Math.PI,                  // Inversé (180 degrés)
-  'xcc': 0,                          // À ajuster selon les tests
+  'Man': Math.PI,                          // À ajuster selon les tests
   'aaa': 0,                          // À ajuster selon les tests
 };
 

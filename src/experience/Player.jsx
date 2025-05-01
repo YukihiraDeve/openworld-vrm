@@ -7,14 +7,32 @@ import usePlayerMovement from '../hooks/usePlayerMovement';
 import FollowCamera from './camera/FollowCamera';
 import { MODELS, ANIMATIONS, MODEL_DIRECTION_OFFSETS } from '../utils/const';
 import { MultiplayerContext } from './multiplayer/MultiplayerContext';
-import { RigidBody, CapsuleCollider } from '@react-three/rapier';
+// Variable statique pour suivre si un modèle a déjà été chargé
+const modelLoaded = { current: false };
 
 export default function Player() {
   const [avatarLoadedRef, setAvatarLoadedRef] = useState(null);
   const avatarObjectRef = useRef(null);
+  const initialModelLoggedRef = useRef(false);
   
-  // Maintenant nous utilisons un état pour le modèle actuel afin de pouvoir le changer
-  const [currentModel, setCurrentModel] = useState('Newon');
+  // Choisir un modèle aléatoire parmi ceux disponibles
+  const [currentModel, setCurrentModel] = useState(() => {
+    const modelKeys = Object.keys(MODELS);
+    const randomIndex = Math.floor(Math.random() * modelKeys.length);
+    return modelKeys[randomIndex];
+  });
+  
+  // Afficher le modèle choisi une seule fois
+  useEffect(() => {
+    if (!initialModelLoggedRef.current && !modelLoaded.current) {
+      console.log(`Modèle aléatoire choisi : ${currentModel}`);
+      initialModelLoggedRef.current = true;
+      modelLoaded.current = true;
+    } else if (!initialModelLoggedRef.current && modelLoaded.current) {
+      // Éviter l'affichage en double lors d'un remontage du composant
+      initialModelLoggedRef.current = true;
+    }
+  }, [currentModel]);
 
   const { emitPlayerMove, emitPlayerAnimation } = useContext(MultiplayerContext);
 
@@ -92,8 +110,8 @@ export default function Player() {
 
   return (
     <>
-    
-    <RigidBody colliders={false} type="dynamic" position={[0, 1, 0]}>
+  
+     
       <VrmAvatar 
         key={currentModel} // Ajouter une clé pour forcer la reconstruction du composant quand le modèle change
         vrmUrl={MODELS[currentModel]} 
@@ -108,9 +126,9 @@ export default function Player() {
         receiveShadow={true}
         capsuleCollider={true}
         modelDirectionOffset={modelDirectionOffset}
-      />
-      <CapsuleCollider args={[0.5, 0.9]} position={[0, 1.1, 0]} />
-      </RigidBody>
+        position={[9, 2, 0]} // Position initiale légèrement au-dessus du sol
+      />    
+      
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
       
     </>
