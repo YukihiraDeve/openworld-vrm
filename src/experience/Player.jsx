@@ -15,11 +15,14 @@ export default function Player() {
   const avatarObjectRef = useRef(null);
   const initialModelLoggedRef = useRef(false);
   
-  // Choisir un modèle aléatoire parmi ceux disponibles
+  // Le modèle est choisi aléatoirement ici pour l'affichage local,
+  // mais ce choix n'est plus envoyé au serveur.
   const [currentModel, setCurrentModel] = useState(() => {
     const modelKeys = Object.keys(MODELS);
     const randomIndex = Math.floor(Math.random() * modelKeys.length);
-    return modelKeys[randomIndex];
+    const initialModel = modelKeys[randomIndex];
+    console.log(`Modèle initial choisi localement : ${initialModel}`);
+    return initialModel;
   });
   
   // Afficher le modèle choisi une seule fois
@@ -34,7 +37,10 @@ export default function Player() {
     }
   }, [currentModel]);
 
-  const { emitPlayerMove, emitPlayerAnimation } = useContext(MultiplayerContext);
+  const { 
+    emitPlayerMove, 
+    emitPlayerAnimation, 
+  } = useContext(MultiplayerContext);
 
   const {
     locomotion,
@@ -56,30 +62,6 @@ export default function Player() {
   const handleAvatarLoad = useCallback((ref) => {
     avatarObjectRef.current = ref;
     setAvatarLoadedRef(ref);
-  }, []);
-
-  // Gestionnaire de changement de modèle avec les touches numériques
-  useEffect(() => {
-    const handleModelChange = (event) => {
-      // Modèles accessibles avec les touches numériques 1-4
-      const modelKeys = Object.keys(MODELS);
-      const keyToIndex = {
-        '1': 0, // Touche 1 pour le premier modèle
-        '2': 1, // Touche 2 pour le deuxième modèle
-        '3': 2, // Touche 3 pour le troisième modèle
-        '4': 3  // Touche 4 pour le quatrième modèle
-      };
-      
-      const index = keyToIndex[event.key];
-      if (index !== undefined && index < modelKeys.length) {
-        const newModel = modelKeys[index];
-        console.log(`Changement de modèle : ${newModel}`);
-        setCurrentModel(newModel);
-      }
-    };
-
-    window.addEventListener('keydown', handleModelChange);
-    return () => window.removeEventListener('keydown', handleModelChange);
   }, []);
 
   useFrame(() => {
@@ -105,7 +87,7 @@ export default function Player() {
     }
   });
 
-  // Obtenir le décalage d'orientation pour le modèle actuel
+  // Obtenir le décalage d'orientation pour le modèle actuel (local)
   const modelDirectionOffset = MODEL_DIRECTION_OFFSETS[currentModel] || 0;
 
   return (
@@ -113,7 +95,7 @@ export default function Player() {
   
      
       <VrmAvatar 
-        key={currentModel} // Ajouter une clé pour forcer la reconstruction du composant quand le modèle change
+        key={currentModel} // La clé est toujours utile pour forcer le rechargement local
         vrmUrl={MODELS[currentModel]} 
         idleAnimationUrl={ANIMATIONS['breathing-idle']}
         walkAnimationUrl={ANIMATIONS['walking']}
@@ -126,7 +108,7 @@ export default function Player() {
         receiveShadow={true}
         capsuleCollider={true}
         modelDirectionOffset={modelDirectionOffset}
-        position={[9, 2, 0]} // Position initiale légèrement au-dessus du sol
+        position={[0, 2, 0]} // Position initiale légèrement au-dessus du sol
       />    
       
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}

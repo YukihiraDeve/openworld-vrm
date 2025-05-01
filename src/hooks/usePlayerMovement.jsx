@@ -106,40 +106,57 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
   }, [cameraAngle]);
 
   useFrame(() => {
-    // LOG: Vérifier si avatarRef est défini et si emitPlayerMove existe
-    //console.log(`[usePlayerMovement useFrame] avatarRef.current: ${avatarRef?.current ? 'Exists' : 'NULL'}, emitPlayerMove: ${emitPlayerMove ? 'Exists' : 'NULL'}`);
-
-    if (!avatarRef?.current || !emitPlayerMove) return;
-
-    // LOG: Vérifier avatarRef.current DIRECTEMENT
-
-    const avatar = avatarRef.current;
-
-    // LOG: Vérifier la variable 'avatar' après assignation
-  
-    // Tentative d'accès aux propriétés
-    let currentPosition = null;
-    let currentQuaternion = null;
-    try {
-      currentPosition = avatar?.position;
-      currentQuaternion = avatar?.quaternion;
-      // LOG: Afficher les propriétés si accessibles
-
-    } catch (e) {
- 
+    // Vérifier si l'avatar et son rigidBody sont prêts, et si emitPlayerMove existe
+    if (!avatarRef?.current?.rigidBodyRef?.current || !emitPlayerMove) {
+      return;
     }
 
-    if (!currentPosition || !currentQuaternion) {
-        // LOG: Indiquer si position/quaternion sont invalides
-        console.log("[usePlayerMovement useFrame] Position or Quaternion is invalid (either null, undefined, or access failed).");
+    const avatarGroup = avatarRef.current; // <-- Ref au groupe visuel
+    const rigidBody = avatarGroup.rigidBodyRef.current; // <-- Ref au corps physique
+
+    let currentPositionVec = null;
+    let currentRotationQuat = null;
+    try {
+      currentPositionVec = rigidBody.translation();       // <-- Lire la POSITION depuis rigidBody
+      currentRotationQuat = avatarGroup.quaternion;    // <-- Lire la ROTATION depuis le groupe visuel
+    } catch (e) {
+        console.error("[usePlayerMovement] Erreur lecture rigidBody ou group:", e);
         return;
     }
 
+    // Vérifier si les objets retournés sont valides
+    if (!currentPositionVec || typeof currentPositionVec.x === 'undefined' || 
+        !currentRotationQuat || typeof currentRotationQuat.w === 'undefined') {
+        console.log("[usePlayerMovement useFrame] Invalid position or rotation object.");
+        return;
+    }
+    
+     // Convertir la position Vector3 en objet simple {x, y, z}
+    const currentPosition = {
+        x: currentPositionVec.x,
+        y: currentPositionVec.y,
+        z: currentPositionVec.z
+    };
+    // Cloner le quaternion pour éviter les mutations accidentelles si nécessaire
+    // et s'assurer que c'est un objet simple {x, y, z, w}
+    const currentQuaternion = {
+        x: currentRotationQuat.x,
+        y: currentRotationQuat.y,
+        z: currentRotationQuat.z,
+        w: currentRotationQuat.w
+    }; 
+
+
     const positionThresholdSq = 0.0001; // Seuil au carré
     const rotationThreshold = 0.001; // Radians
+    
+    // Comparaison de position
+    const tempCurrentPosVec3 = new THREE.Vector3(currentPosition.x, currentPosition.y, currentPosition.z);
+    const posDiffSq = tempCurrentPosVec3.distanceToSquared(lastPosition.current);
 
-    const posDiffSq = currentPosition.distanceToSquared(lastPosition.current);
-    const rotDiff = lastQuaternion.current.angleTo(currentQuaternion);
+    // Comparaison de rotation
+    const tempCurrentRotQuat = new THREE.Quaternion(currentQuaternion.x, currentQuaternion.y, currentQuaternion.z, currentQuaternion.w);
+    const rotDiff = lastQuaternion.current.angleTo(tempCurrentRotQuat);
 
     // LOG: Afficher les différences calculées
     // console.log(`[usePlayerMovement useFrame] Pos Diff Sq: ${posDiffSq.toFixed(6)}, Rot Diff: ${rotDiff.toFixed(6)}`);
@@ -148,13 +165,14 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
     const rotationChanged = rotDiff > rotationThreshold;
 
     if (positionChanged || rotationChanged) {
-      // LOG AJOUTÉ : Vérifier la position lue par ce hook
-    emitPlayerMove({
-        position: { x: currentPosition.x, y: currentPosition.y, z: currentPosition.z },
-        rotation: { x: currentQuaternion.x, y: currentQuaternion.y, z: currentQuaternion.z, w: currentQuaternion.w }
+      // console.log("Emitting move from usePlayerMovement:", { position: currentPosition, rotation: currentQuaternion }); // Décommenter pour log
+      emitPlayerMove({
+        position: currentPosition,
+        rotation: currentQuaternion
       });
-      lastPosition.current.copy(currentPosition);
-      lastQuaternion.current.copy(currentQuaternion);
+      // Mettre à jour les dernières valeurs connues
+      lastPosition.current.set(currentPosition.x, currentPosition.y, currentPosition.z);
+      lastQuaternion.current.set(currentQuaternion.x, currentQuaternion.y, currentQuaternion.z, currentQuaternion.w);
     }
   });
 

@@ -8,7 +8,7 @@ const SOCKET_SERVER_URL = 'http://localhost:3001';
 export default function MultiplayerProvider({ children, initialConnectionDelay = null }) {
   const [socket, setSocket] = useState(null);
   const [players, setPlayers] = useState({}); // { id: { position, rotation, locomotion, ... }, ... }
-  const localPlayerIdRef = useRef(null);
+  const [localPlayerId, setLocalPlayerId] = useState(null);
 
   // Connexion et déconnexion
   useEffect(() => {
@@ -20,13 +20,13 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
 
     newSocket.on('connect', () => {
       console.log('Connecté au serveur Socket.IO avec ID:', newSocket.id);
-      localPlayerIdRef.current = newSocket.id;
+      setLocalPlayerId(newSocket.id);
     });
 
     newSocket.on('disconnect', (reason) => {
       console.log('Déconnecté du serveur Socket.IO:', reason);
       setPlayers({});
-      localPlayerIdRef.current = null;
+      setLocalPlayerId(null);
     });
 
     // Événement pour recevoir l'état de tous les joueurs (y compris soi-même au début)
@@ -56,13 +56,12 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
     }
   }, [socket]);
 
-
   const contextValue = {
     socket,
     players,
-    localPlayerId: localPlayerIdRef.current,
+    localPlayerId: localPlayerId,
     emitPlayerMove,
-    emitPlayerAnimation
+    emitPlayerAnimation,
   };
 
   return (

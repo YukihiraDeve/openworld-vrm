@@ -54,9 +54,9 @@ export default function CustomCanvas({ sunPosition, setSunPosition }) {
           
           {/* Joueurs distants */}
           {players && Object.entries(players).map(([id, playerData]) => {
-            if (id === localPlayerId) return null;
-            return <RemotePlayer key={id} playerData={playerData} />;
-          })}
+              if (id === localPlayerId) return null;
+              return <RemotePlayer key={id} playerData={playerData} />;
+            })}
           
         </Physics>
        

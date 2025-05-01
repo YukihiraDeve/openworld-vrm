@@ -9,6 +9,8 @@ import { RigidBody, CapsuleCollider } from '@react-three/rapier';
 
 // Cache global pour les modèles déjà chargés
 const loadedModels = new Map();
+const yAxis = new THREE.Vector3(0, 1, 0); // Pré-calculer l'axe Y
+const targetQuaternion = new THREE.Quaternion(); // Réutiliser le quaternion cible
 
 async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
   const loader = new FBXLoader();
@@ -84,23 +86,31 @@ export default function VrmAvatar({
   walkAnimationUrl,
   runAnimationUrl,  
   locomotion,       
-  movementDirection, 
+  movementDirection, // Fourni seulement pour le joueur local
   walkSpeed = 1.5,     
   runSpeed = 3.5,      
-  position = [0, 20, 0],
+  position = [0, 0, 0],
   scale = 1,
   rotation = null,
   modelDirectionOffset = 0,
   onLoad,
-  capsuleCollider = false,
+  capsuleCollider = false, // true pour le joueur local, false pour les distants
 }) {
-  const groupRef = useRef(); 
-  const vrmRef = useRef(); 
-  const rigidBodyRef = useRef();
+  const groupRef = useRef(); // Référence au groupe contenant le modèle visuel
+  const vrmRef = useRef(); // Référence à l'instance VRM chargée
+  const rigidBodyRef = useRef(); // Référence au RigidBody (seulement si capsuleCollider=true)
   const [mixer, setMixer] = useState(null);
   const actionsRef = useRef({}); 
   const currentActionRef = useRef(null); 
-  const [modelLoaded, setModelLoaded] = useState(false);
+  const [modelLoaded, setModelLoaded] = useState(false); // Pour le callback onLoad
+
+  // Ref pour stocker les dernières valeurs de props pour useFrame
+  const latestPropsRef = useRef({ position, rotation });
+
+  // Effet pour mettre à jour le ref quand les props changent
+  useEffect(() => {
+    latestPropsRef.current = { position, rotation };
+  }, [position, rotation]);
 
   // Fonction pour charger les animations
   const loadAnimations = async (loadedVrmInstance, animMixer) => {
@@ -116,7 +126,7 @@ export default function VrmAvatar({
         actionsRef.current.idle.weight = 1;
         actionsRef.current.idle.play();
       } else {
-        console.error('Le clip Idle n\'a pas pu être chargé ou converti.');
+        console.error('Le clip Idle na pas pu être chargé ou converti.');
       }
 
       if (walkClip) {
@@ -124,7 +134,7 @@ export default function VrmAvatar({
         actionsRef.current.walk.weight = 0;
         actionsRef.current.walk.play();
       } else {
-        console.error('Le clip Walk n\'a pas pu être chargé ou converti.');
+        console.error('Le clip Walk na pas pu être chargé ou converti.');
       }
 
       if (runClip) {
@@ -132,7 +142,7 @@ export default function VrmAvatar({
         actionsRef.current.run.weight = 0;
         actionsRef.current.run.play();
       } else {
-        console.error('Le clip Run n\'a pas pu être chargé ou converti.');
+        console.error('Le clip Run na pas pu être chargé ou converti.');
       }
 
       // Initialiser l'action courante si idle existe
@@ -145,65 +155,57 @@ export default function VrmAvatar({
         actionsRef.current.run.weight = 1;
         currentActionRef.current = actionsRef.current.run;
       } else {
-        console.error('Aucune animation n\'a pu être initialisée.');
+        console.error('Aucune animation na pu être initialisée.');
       }
     } catch (error) {
       console.error("Erreur lors du chargement des animations:", error);
     }
   };
 
+  // Effet pour charger le modèle VRM et les animations
   useEffect(() => {
-    // Ne pas essayer de charger si le groupe de référence n'est pas disponible
-    if (!groupRef.current) return;
+    let vrmSceneAddedToGroup = false; // Indicateur pour savoir si la scène a été ajoutée
 
-    // Vérifier si nous avons déjà le modèle en cache
+    const loadVrm = async () => {
+      // Vérifier si le modèle est en cache
     if (loadedModels.has(vrmUrl)) {
       console.log(`Utilisation du modèle en cache: ${vrmUrl}`);
       const cachedVrm = loadedModels.get(vrmUrl);
       vrmRef.current = cachedVrm;
       
-      // S'assurer que la scène est ajoutée au groupe (si c'est un nouveau groupe)
-      if (!groupRef.current.children.includes(cachedVrm.scene)) {
+        if (groupRef.current && !groupRef.current.children.includes(cachedVrm.scene)) {
         groupRef.current.add(cachedVrm.scene);
+             vrmSceneAddedToGroup = true;
       }
       
-      // Créer un nouveau mixer pour les animations
       const animMixer = new THREE.AnimationMixer(cachedVrm.scene);
       setMixer(animMixer);
+        await loadAnimations(cachedVrm, animMixer);
       
-      // Charger les animations pour ce modèle
-      loadAnimations(cachedVrm, animMixer);
-      
-      // Informer que le chargement est terminé
       if (onLoad && !modelLoaded) {
-        groupRef.current.rigidBodyRef = rigidBodyRef;
+           groupRef.current.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
         onLoad(groupRef.current);
         setModelLoaded(true);
       }
-      
       return;
     }
 
-    // Préparer un nouveau chargement
+      // Charger un nouveau modèle
     console.log(`Chargement d'un nouveau modèle: ${vrmUrl}`);
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
 
-    let loadedVrmInstance;
-
-    loader.load(vrmUrl, async (gltf) => {
-      // Vérifier si le composant est toujours monté
+      try {
+        const gltf = await loader.loadAsync(vrmUrl);
       if (!groupRef.current) {
-        console.log("Abandon du chargement - composant démonté");
+            console.log("Abandon du chargement - composant peut-être démonté");
         return;
       }
 
-      // Traiter le modèle VRM
       VRMUtils.removeUnnecessaryJoints(gltf.scene);
-      loadedVrmInstance = gltf.userData.vrm;
+        const loadedVrmInstance = gltf.userData.vrm;
       vrmRef.current = loadedVrmInstance;
 
-      // Configurer le modèle
       loadedVrmInstance.scene.traverse((object) => {
         if (object.isMesh) {
           object.castShadow = true;
@@ -212,324 +214,216 @@ export default function VrmAvatar({
         }
       });
 
-      // Ajouter à la scène
+        if (groupRef.current) {
       groupRef.current.add(loadedVrmInstance.scene);
+            vrmSceneAddedToGroup = true;
+        }
       
-      // Mettre en cache pour une utilisation future
-      loadedModels.set(vrmUrl, loadedVrmInstance);
+        loadedModels.set(vrmUrl, loadedVrmInstance); // Mettre en cache
       
-      // Créer mixer et animations
       const animMixer = new THREE.AnimationMixer(loadedVrmInstance.scene);
       setMixer(animMixer);
-      
-      // Charger les animations
       await loadAnimations(loadedVrmInstance, animMixer);
       
-      // Callback après chargement
       if (onLoad && !modelLoaded) {
-        groupRef.current.rigidBodyRef = rigidBodyRef;
+           groupRef.current.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
         onLoad(groupRef.current);
         setModelLoaded(true);
       }
-    }, 
-    // Progression de chargement
-    (progress) => {
-      // Optionnel: gérer la progression
-    }, 
-    // Gestion des erreurs
-    (error) => {
+      } catch (error) {
       console.error("Erreur de chargement VRM:", error);
-    });
+      }
+    };
+
+    if (vrmUrl) { // Ne charger que si vrmUrl est fourni
+        loadVrm();
+    }
 
     // Cleanup lors du démontage
     return () => {
-      // Nettoyage seulement si nécessaire, les modèles sont maintenant en cache
+       if (vrmSceneAddedToGroup && groupRef.current && vrmRef.current?.scene) {
+         // Essayer de retirer la scène seulement si elle existe toujours dans le groupe
+         if (groupRef.current.children.includes(vrmRef.current.scene)) {
+             groupRef.current.remove(vrmRef.current.scene);
+         }
+       }
       if (mixer) {
         mixer.stopAllAction();
+        // Optionnel: supprimer les clips et le mixer pour libérer la mémoire si nécessaire
+        // Object.values(actionsRef.current).forEach(action => mixer.uncacheAction(action.getClip()));
+        // setMixer(null); // Déplacé après la boucle
       }
+      setMixer(null); // Assurer la réinitialisation
+      // Réinitialiser les refs d'action pour éviter les problèmes au rechargement
+      actionsRef.current = {};
+      currentActionRef.current = null;
     };
-  }, [vrmUrl]); // Dépendances réduites pour éviter les rechargements inutiles
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vrmUrl, onLoad, capsuleCollider]); // Dépendances correctes
 
+  // Boucle de rendu pour mettre à jour la position, rotation, animations
   useFrame((state, delta) => {
-    // Mise à jour des animations
+    // 1. Mettre à jour le mixer d'animation
     if (mixer) {
       mixer.update(delta);
     }
     
-    // Mise à jour du VRM
+    // 2. Mettre à jour le modèle VRM lui-même (pour les expressions, etc.)
     if (vrmRef.current) {
       vrmRef.current.update(delta);
     }
     
-    // Gestion des transitions d'animation
-    const targetActionObject = actionsRef.current[locomotion]; 
-    const previousActionObject = currentActionRef.current;
-    
-    // Vérifier si une transition est nécessaire et possible
-    if (targetActionObject && previousActionObject && targetActionObject !== previousActionObject) {
-      targetActionObject.enabled = true;
-      targetActionObject.setEffectiveTimeScale(1.0);
-      targetActionObject.setEffectiveWeight(1.0);
-      targetActionObject.time = 0; 
-      targetActionObject.play();
-      
-      // Transitionner
-      previousActionObject.crossFadeTo(targetActionObject, 0.3, true); 
-      
-      currentActionRef.current = targetActionObject;
+    // 3. Gérer la position et la rotation
+    if (groupRef.current) {
+      // Si physique activée (joueur local)
+      if (capsuleCollider && rigidBodyRef.current && movementDirection) {
+         // Déplacer le RigidBody basé sur l'input
+          const speed = locomotion === 'run' ? runSpeed : walkSpeed;
+          const currentVelocity = rigidBodyRef.current.linvel();
+
+          rigidBodyRef.current.setLinvel({
+            x: movementDirection.x * speed,
+            y: currentVelocity.y, // Conserver la vitesse verticale (saut, gravité)
+            z: movementDirection.z * speed
+          }, true); // auto-wake
+
+          // Arrêter le mouvement horizontal si pas d'input
+          if (movementDirection.lengthSq() === 0) {
+              rigidBodyRef.current.setLinvel({ x: 0, y: currentVelocity.y, z: 0 }, true);
+          }
+
+          // Calculer la rotation du groupe visuel (joueur local)
+          if (movementDirection.lengthSq() > 0) {
+              const angle = Math.atan2(movementDirection.x, movementDirection.z);
+              targetQuaternion.setFromAxisAngle(yAxis, angle + modelDirectionOffset);
+               groupRef.current.quaternion.slerp(targetQuaternion, 0.15); // Rotation plus fluide
+          }
+
+      }
+      // Si physique désactivée (joueur distant)
+      else if (!capsuleCollider && groupRef.current) {
+         // Lire les dernières props depuis le ref
+        const currentPos = latestPropsRef.current.position;
+        const currentRot = latestPropsRef.current.rotation;
+
+        // Log pour vérifier les props position/rotation dans useFrame pour les joueurs distants
+         console.log(`[useFrame Remote] ID: ${vrmUrl?.split('/').pop()}`, // Utilise le nom du fichier comme pseudo-ID
+                     `Pos prop (ref): ${JSON.stringify(currentPos)}`, 
+                     `Rot prop (ref): ${JSON.stringify(currentRot)}`);
+
+        // Mettre à jour la position directement depuis les valeurs du ref
+        if (Array.isArray(currentPos) && currentPos.length === 3) {
+          groupRef.current.position.set(currentPos[0], currentPos[1], currentPos[2]);
+        }
+        // Mettre à jour la rotation directement depuis les valeurs du ref
+        if (currentRot) {
+          groupRef.current.quaternion.set(currentRot.x, currentRot.y, currentRot.z, currentRot.w);
+        }
+      }
     }
 
-    // Si le modèle est chargé et que nous avons groupRef, on peut l'utiliser pour les mouvements
-    if (groupRef.current && vrmRef.current && rigidBodyRef.current) {
-      // Détection et déblocage du personnage
-      const velocity = rigidBodyRef.current.linvel();
-      const position = rigidBodyRef.current.translation();
-      const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-      
-      // Système anti-blocage: si le personnage essaie de bouger mais reste pratiquement immobile
-      const isMovingInput = movementDirection && (movementDirection.x !== 0 || movementDirection.z !== 0);
-      const isStuck = isMovingInput && horizontalSpeed < 0.1 && Math.abs(velocity.y) < 0.1;
-      
-      // Compteur de temps bloqué
-      if (isStuck) {
-        if (!rigidBodyRef.current.stuckTime) {
-          rigidBodyRef.current.stuckTime = 0;
-        }
-        rigidBodyRef.current.stuckTime += delta;
-        
-        // Si bloqué pendant plus de 0.5 secondes, appliquer une force de déblocage
-        if (rigidBodyRef.current.stuckTime > 0.5) {
-          // Petit boost vertical pour décoller du sol
-          rigidBodyRef.current.applyImpulse({
-            x: 0,
-            y: 1.0, // Augmenté pour mieux se dégager du sol
-            z: 0
-          });
-          
-          // Force plus importante dans la direction du mouvement
-          rigidBodyRef.current.applyImpulse({
-            x: movementDirection.x * 5,
-            y: 0,
-            z: movementDirection.z * 5
-          });
-          
-          // Réinitialiser le compteur de blocage
-          rigidBodyRef.current.stuckTime = 0;
-        }
-      } else {
-        // Réinitialiser le compteur s'il n'est pas bloqué
-        rigidBodyRef.current.stuckTime = 0;
-      }
+    // 4. Gérer les transitions d'animation (commun au local et distant)
+     if (mixer && actionsRef.current && locomotion) { // Assurez-vous que locomotion existe
+        const targetActionObject = actionsRef.current[locomotion];
+        const previousActionObject = currentActionRef.current;
 
-      // Initialiser les références de direction si nécessaire
-      if (!rigidBodyRef.current.lastInputDirection) {
-        rigidBodyRef.current.lastInputDirection = new THREE.Vector3(0, 0, 0);
-        rigidBodyRef.current.currentInputDirection = new THREE.Vector3(0, 0, 0);
-        rigidBodyRef.current.lastMoveTime = 0;
-        rigidBodyRef.current.changeDirectionCooldown = false;
-      }
-
-      // Nouvelle gestion du mouvement améliorée
-      if (isMovingInput) {
-        // S'assurer que le RigidBody est actif
-        if (rigidBodyRef.current.isSleeping) {
-          rigidBodyRef.current.wakeUp();
-        }
-        
-        // Stocker la direction d'entrée actuelle
-        rigidBodyRef.current.currentInputDirection.set(
-          movementDirection.x, 
-          0, 
-          movementDirection.z
-        ).normalize();
-        
-        // Détecter un changement significatif de direction d'entrée
-        const currentInput = rigidBodyRef.current.currentInputDirection;
-        const lastInput = rigidBodyRef.current.lastInputDirection;
-        const inputDotProduct = currentInput.dot(lastInput);
-        
-        // N'appliquer le freinage que pour les changements de direction importants (>90°)
-        // Angle proche de 90° ou plus (dot product proche de 0 ou négatif)
-        const isSignificantChange = inputDotProduct < 0.1 && lastInput.lengthSq() > 0.5;
-        
-        // Changement mineur de direction (léger ajustement)
-        const isMinorChange = inputDotProduct < 0.9 && inputDotProduct >= 0.1 && lastInput.lengthSq() > 0.5;
-        
-        // Si la direction d'entrée a changé significativement, ralentir mais pas complètement
-        if (isSignificantChange && !rigidBodyRef.current.changeDirectionCooldown) {
-          // Freinage partiel pour les changements importants (virage à 90° ou plus)
-          rigidBodyRef.current.setLinvel({
-            x: velocity.x * 0.3,
-            y: velocity.y,
-            z: velocity.z * 0.3
-          });
-          
-          // Cooldown court pour les changements importants
-          rigidBodyRef.current.changeDirectionCooldown = true;
-          rigidBodyRef.current.lastMoveTime = state.clock.elapsedTime;
-          
-          // Mettre à jour la direction stockée
-          rigidBodyRef.current.lastInputDirection.copy(currentInput);
-          
-          // Désactiver le cooldown après un très court délai
-          setTimeout(() => {
-            if (rigidBodyRef.current) {
-              rigidBodyRef.current.changeDirectionCooldown = false;
+        if (targetActionObject && targetActionObject !== previousActionObject) {
+            if (previousActionObject) {
+                 targetActionObject.reset().setEffectiveWeight(1).fadeIn(0.3).play();
+                 previousActionObject.fadeOut(0.3);
+            } else {
+                 targetActionObject.reset().setEffectiveWeight(1).play();
             }
-          }, 70); // Délai réduit de moitié pour plus de fluidité
-        } 
-        // Pour les changements mineurs, ajustement léger sans cooldown
-        else if (isMinorChange && !rigidBodyRef.current.changeDirectionCooldown) {
-          // Léger freinage pour les ajustements de direction
-          rigidBodyRef.current.setLinvel({
-            x: velocity.x * 0.8,
-            y: velocity.y,
-            z: velocity.z * 0.8
-          });
-          
-          // Mettre à jour la direction sans cooldown
-          rigidBodyRef.current.lastInputDirection.copy(currentInput);
+            currentActionRef.current = targetActionObject;
+        } else if (!previousActionObject && targetActionObject) {
+             targetActionObject.reset().setEffectiveWeight(1).play();
+            currentActionRef.current = targetActionObject;
         }
-        else if (!rigidBodyRef.current.changeDirectionCooldown) {
-          // Pour les mouvements continus, juste mettre à jour la direction
-          rigidBodyRef.current.lastInputDirection.copy(currentInput);
-        }
-        
-        // Appliquer les forces seulement si on n'est pas en cooldown ou avec une force réduite pendant le cooldown
-        // Calcul de la vitesse cible basée sur le type de locomotion
-        const targetSpeed = locomotion === 'run' ? runSpeed : (locomotion === 'walk' ? walkSpeed : 0);
-        
-        // Force de base pour le mouvement
-        const baseForce = locomotion === 'run' ? 0.8 : 0.5;
-        
-        // Transition progressive entre l'arrêt et le mouvement
-        const timeSinceDirectionChange = state.clock.elapsedTime - rigidBodyRef.current.lastMoveTime;
-        
-        // Facteur d'accélération plus rapide pour plus de réactivité
-        let accelerationFactor = 1.0;
-        if (rigidBodyRef.current.changeDirectionCooldown) {
-          // Force réduite pendant le cooldown mais pas nulle pour maintenir un mouvement plus fluide
-          accelerationFactor = Math.min(timeSinceDirectionChange * 5, 0.4);
-        }
-        
-        // N'appliquer la force que si on n'a pas dépassé la vitesse cible
-        if (horizontalSpeed < targetSpeed) {
-          // Force proportionnelle à la différence de vitesse
-          const speedRatio = Math.min(horizontalSpeed / targetSpeed, 0.9);
-          const adjustedForce = baseForce * (1 - speedRatio * 0.8) * accelerationFactor; // Moins de réduction basée sur la vitesse
-          
-          rigidBodyRef.current.applyImpulse({
-            x: movementDirection.x * adjustedForce,
-            y: 0,
-            z: movementDirection.z * adjustedForce
-          });
-        }
-        
-        // Rotation progressive vers la direction du mouvement (toujours active)
-        const targetRotation = Math.atan2(movementDirection.x, movementDirection.z) + modelDirectionOffset;
-        const currentRotation = groupRef.current.rotation.y;
-        const rotationDiff = targetRotation - currentRotation;
-        
-        // Normaliser l'angle entre -PI et PI
-        const normalizedDiff = ((rotationDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
-        
-        // Rotation plus rapide pour un contrôle plus réactif
-        groupRef.current.rotation.y += normalizedDiff * 0.2;
-      } else if (rigidBodyRef.current && locomotion === 'idle') {
-        // Quand on ne bouge pas, freinage progressif
-        if (Math.abs(velocity.x) > 0.05 || Math.abs(velocity.z) > 0.05) {
-          rigidBodyRef.current.setLinvel({
-            x: velocity.x * 0.8,
-            y: velocity.y,
-            z: velocity.z * 0.8
-          });
-        } else if (Math.abs(velocity.x) > 0.01 || Math.abs(velocity.z) > 0.01) {
-          // Réduction très douce à vitesse faible
-          rigidBodyRef.current.setLinvel({
-            x: velocity.x * 0.9,
-            y: velocity.y,
-            z: velocity.z * 0.9
-          });
-        }
-        
-        // Réinitialiser l'état du mouvement
-        rigidBodyRef.current.lastInputDirection.set(0, 0, 0);
-        rigidBodyRef.current.changeDirectionCooldown = false;
-        
-        // Petite force pour maintenir le RigidBody actif
-        if (horizontalSpeed < 0.001) {
-          rigidBodyRef.current.applyImpulse({
-            x: 0.000001 * (Math.random() - 0.5),
-            y: 0,
-            z: 0.000001 * (Math.random() - 0.5)
-          });
-        }
-      }
-    }
+     }
+
+    // 5. Système anti-blocage (seulement pour le joueur local avec physique)
+     if (capsuleCollider && groupRef.current && vrmRef.current && rigidBodyRef.current && movementDirection) {
+         const velocity = rigidBodyRef.current.linvel();
+         const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+         const isMovingInput = movementDirection.lengthSq() > 0;
+         const isStuck = isMovingInput && horizontalSpeed < 0.1 && Math.abs(velocity.y) < 0.1; // Condition de blocage
+
+         const stuckTimeRef = rigidBodyRef.current.userData?.stuckTimeRef || { current: 0 };
+         rigidBodyRef.current.userData = { ...rigidBodyRef.current.userData, stuckTimeRef };
+
+         if (isStuck) {
+             stuckTimeRef.current += delta;
+             if (stuckTimeRef.current > 0.5) {
+                 console.log("Déblocage !");
+                 rigidBodyRef.current.applyImpulse({ x: 0, y: 1.5, z: 0 }, true); // Boost vertical
+                 rigidBodyRef.current.applyImpulse({ x: movementDirection.x * 3, y: 0, z: movementDirection.z * 3 }, true); // Boost directionnel
+                 stuckTimeRef.current = 0; // Réinitialiser
+             }
+         } else {
+             stuckTimeRef.current = 0; // Réinitialiser si non bloqué
+         }
+     }
+
   });
 
-  // Effet pour empêcher le sommeil du RigidBody
+   // Effet pour prévenir le sommeil du RigidBody (seulement si physique activée)
   useEffect(() => {
-    // Fonction pour s'assurer que le RigidBody reste actif
+      if (!capsuleCollider) return; // Ne rien faire si pas de physique
+
     const interval = setInterval(() => {
-      if (rigidBodyRef.current) {
-        // Vérifier si le RigidBody est en sommeil ou semble bloqué
-        const velocity = rigidBodyRef.current.linvel();
-        const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-        
-        // Si le RigidBody est en sommeil ou immobile, appliquer une impulsion minuscule
-        if (rigidBodyRef.current.isSleeping || horizontalSpeed < 0.0001) {
-          rigidBodyRef.current.wakeUp?.();
-          
-          // Impulsion extrêmement faible pour maintenir le RigidBody actif
-          rigidBodyRef.current.applyImpulse({
-            x: 0.00001 * (Math.random() - 0.5),
-            y: 0.00001,
-            z: 0.00001 * (Math.random() - 0.5)
-          });
+        if (rigidBodyRef.current && rigidBodyRef.current.isSleeping()) {
+           console.log("RigidBody endormi, réveil !");
+          rigidBodyRef.current.wakeUp();
+           rigidBodyRef.current.applyImpulse({ x: 0.0001, y: 0.0001, z: 0.0001 }, true);
         }
-      }
-    }, 500); // Vérifier toutes les 500ms
+      }, 1000); // Vérifier toutes les secondes
     
     return () => clearInterval(interval);
-  }, []);
+    }, [capsuleCollider]); // Dépend de capsuleCollider
 
-  // Rendu conditionnel avec RigidBody si capsuleCollider est activé
+
+  // Rendu conditionnel
+  if (capsuleCollider) {
+    // Rendu avec physique pour le joueur local
   return (
     <RigidBody 
       ref={rigidBodyRef}
-      position={position}
-      mass={1.0}
+        position={position} // Position initiale du corps physique
+        colliders={false} // Le collider est ajouté manuellement en dessous
+        mass={1}
       type="dynamic"
-      lockRotations
-      linearDamping={0.8}
-      angularDamping={0.95}
-      colliders={false}
-      friction={0.2}
-      restitution={0.0}
-      enabledRotations={[false, true, false]}
-      gravityScale={1.2}
-      ccd={true}
-      canSleep={false}  // Désactiver le mode sleep pour éviter le blocage
-    >
+        enabledRotations={[false, true, false]} // Autorise rotation Y
+        lockRotations={true} // Verrouille X et Z mais pas Y (implicitement)
+        linearDamping={0.8} // Freinage linéaire
+        angularDamping={0.8} // Freinage angulaire
+        friction={0.5}
+        restitution={0.1}
+        gravityScale={1.5}
+        canSleep={false} // Important pour éviter les problèmes de réveil
+        ccd={true} // Continuous Collision Detection
+      >
+        {/* Le groupe visuel est un enfant du RigidBody */}
+        <group ref={groupRef} scale={scale}>
+          {/* Le modèle VRM sera ajouté ici par useEffect */}
+        </group>
+        {/* Le collider physique est aussi un enfant du RigidBody */}
+        <CapsuleCollider
+          args={[0.7, 0.3]} // [demi-hauteur partie cylindrique, rayon] - Ajuster
+          position={[0, 1.0, 0]} // Position relative au RigidBody - Ajuster Y = demi-hauteur + rayon
+        />
+      </RigidBody>
+    );
+  } else {
+    // Rendu sans physique pour les joueurs distants
+    return (
       <group 
         ref={groupRef} 
+        position={position} // Position initiale (sera mise à jour dans useFrame)
         scale={scale}
-        rotation={rotation ? [rotation[0], rotation[1], rotation[2]] : [0, 0, 0]}
+        // La rotation sera appliquée dans useFrame
       >
-        {capsuleCollider && (
-          <>
-            {/* Collider physique invisible */}
-            <CapsuleCollider 
-              args={[0.9, 0.20]}
-              position={[0, 1.1, 0]}
-              friction={0.05}
-              type="dynamic"
-            />
-
-          </>
-        )}
+        {/* Le modèle VRM sera ajouté ici par useEffect */}
       </group>
-    </RigidBody>
   );
+  }
 }

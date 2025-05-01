@@ -21,22 +21,28 @@ export default function RemotePlayer({ playerData }) {
   // Obtenir le décalage d'orientation pour le modèle du joueur distant
   const modelDirectionOffset = MODEL_DIRECTION_OFFSETS[playerModel] || 0;
 
+  // Log pour débogage
+  console.log(`Rendering RemotePlayer ${playerData.id}:`, {
+    position,
+    rotation: rotationData,
+    locomotion,
+    playerModel,
+    vrmUrl: MODELS[playerModel],
+  });
+
   return (
     <VrmAvatar
-      // Utiliser le modèle spécifié pour le joueur distant
-      vrmUrl={MODELS[playerModel]} 
+      // Clé unique incluant l'ID du joueur ET le modèle pour forcer la reconstruction si le modèle change
+      key={`${playerData.id}-${playerModel}`}
+      vrmUrl={MODELS[playerModel]}
       idleAnimationUrl={ANIMATIONS['breathing-idle']}
       walkAnimationUrl={ANIMATIONS['walking']}
       runAnimationUrl={ANIMATIONS['run']}
       locomotion={locomotion}
-      // La direction du mouvement n'est pas nécessaire ici, la position est directement mise à jour
-      // movementDirection={/* Pas nécessaire pour les joueurs distants */} 
       position={position}
-      // Passe la rotation reçue au composant VrmAvatar
       rotation={rotationData}
       scale={1}
-      modelDirectionOffset={modelDirectionOffset} // Ajouter le décalage d'orientation
-      // La rotation sera appliquée directement au groupe si nécessaire
+      modelDirectionOffset={modelDirectionOffset}
     />
   );
 }
