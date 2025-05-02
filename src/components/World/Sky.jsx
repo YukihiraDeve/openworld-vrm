@@ -67,6 +67,7 @@ export default function Sky({
   const p = PRESETS[preset] ?? PRESETS.noon;
   const flareTex = useLoader(THREE.TextureLoader, flareTextures);
   const sunRef = useRef();
+  const dirLightRef = useRef();
   useLensflare(sunRef, flareTex, !p.hideSun);
 
   const topCol = new THREE.Color(p.topColor);
@@ -79,7 +80,14 @@ export default function Sky({
 
   // Face camera
   const { camera } = useThree();
-  useFrame(()=>{ sunRef.current && sunRef.current.quaternion.copy(camera.quaternion); });
+  useFrame(()=>{ 
+    sunRef.current && sunRef.current.quaternion.copy(camera.quaternion);
+    
+    // Exposer la référence de la lumière dans le contexte global
+    if (dirLightRef.current && !window.mainDirectionalLight) {
+      window.mainDirectionalLight = dirLightRef.current;
+    }
+  });
 
   return (
     <>
@@ -101,12 +109,20 @@ export default function Sky({
           </sprite>
           {/* Actual lighting */}
           <directionalLight
+            ref={dirLightRef}
             position={[0,0,0]} // already in group at sunVec
             intensity={3}
             color={sunCol}
             castShadow
             shadow-mapSize-width={2048}
             shadow-mapSize-height={2048}
+            shadow-camera-left={-50}
+            shadow-camera-right={50}
+            shadow-camera-top={50}
+            shadow-camera-bottom={-50}
+            shadow-camera-near={0.1}
+            shadow-camera-far={1000}
+            shadow-bias={-0.0001}
           />
         </group>
       )}

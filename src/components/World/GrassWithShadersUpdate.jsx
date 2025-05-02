@@ -37,7 +37,7 @@ export default function GrassGPT4({
     const indices = [];
 
     const bladesWidth = 0.05;
-    const bladesHeight = 0.2;
+    const bladesHeight = 0.5;
     const grassCount = Math.floor(density);
 
     for (let i = 0; i < grassCount; i++) {

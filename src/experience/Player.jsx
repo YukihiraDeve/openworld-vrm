@@ -57,7 +57,8 @@ export default function Player({ audioListener, stepSoundBuffers }) {
       const playerPosition = avatarObjectRef.current.position;
       const directionalLights = [];
       
-      avatarObjectRef.current.parent.traverse((object) => {
+      // Recherche plus large des lumières dans la scène
+      avatarObjectRef.current.parent.parent.traverse((object) => {
         if (object.isDirectionalLight) {
           directionalLights.push(object);
         }
@@ -65,8 +66,24 @@ export default function Player({ audioListener, stepSoundBuffers }) {
       
       if (directionalLights.length > 0) {
         directionalLights.forEach(light => {
+          // Assurer que la target existe
+          if (!light.target) {
+            light.target = new THREE.Object3D();
+            light.parent.add(light.target);
+          }
+          
+          // Mettre à jour la target pour qu'elle suive le joueur
           light.target.position.copy(playerPosition);
           light.target.updateMatrixWorld();
+          
+          // Mise à jour du frustum de la caméra d'ombre
+          if (light.shadow && light.shadow.camera) {
+            // Centrer la caméra d'ombre sur le joueur
+            const shadowCameraTarget = playerPosition.clone();
+            light.shadow.camera.lookAt(shadowCameraTarget);
+            light.shadow.camera.updateProjectionMatrix();
+            light.shadow.needsUpdate = true;
+          }
         });
       }
     }
