@@ -2,10 +2,15 @@ import { useMemo } from 'react';
 import * as THREE from 'three';
 import { RigidBody } from '@react-three/rapier';
 
+// Fonction partagée pour calculer la hauteur du terrain
+export function calculateHeight(x, z, frequency, amplitude) {
+  return Math.sin(x * frequency) * Math.cos(z * frequency) * amplitude;
+}
+
 export default function Ground() {
   const groundSize = 100; // Increased size
   const segments = 100;   // Increased segments for detail
-  const amplitude = 1;  // Height of the hills
+  const amplitude = 1;    // Height of the hills
   const frequency = 0.1;  // How spread out the hills are
 
   // Créer la géométrie pour le visuel
@@ -19,7 +24,7 @@ export default function Ground() {
       const x = positions[i];
       const y = positions[i + 1];
       // Apply a simple wave function for hills
-      positions[i + 2] = Math.sin(x * frequency) * Math.cos(y * frequency) * amplitude;
+      positions[i + 2] = calculateHeight(x, y, frequency, amplitude);
     }
 
     // Notify Three.js that geometry has changed

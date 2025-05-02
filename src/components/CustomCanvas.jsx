@@ -8,6 +8,7 @@ import { MultiplayerContext } from '../experience/multiplayer/MultiplayerContext
 import RemotePlayer from '../experience/multiplayer/RemotePlayer';
 import Grass from './World/GrassWithShadersUpdate';
 import Sky from './World/Sky';
+import Fog from './world/Fog';
 import { SOUNDS } from '../utils/const';
 import BackgroundMusic from './audio/BackgroundMusic';
 
@@ -19,6 +20,13 @@ const stepSoundPaths = [
   `${SOUNDS.grassStep}/Step4.mp3`,
   `${SOUNDS.grassStep}/Step5.mp3`,
 ];
+
+// Paramètres du terrain partagés entre le sol et l'herbe
+const TERRAIN_CONFIG = {
+  size: 100,
+  amplitude: 1,
+  frequency: 0.1
+};
 
 // Composant interne pour gérer l'audio et le rendu
 function SceneContent({ sunPosition, setSunPosition }) {
@@ -81,20 +89,25 @@ function SceneContent({ sunPosition, setSunPosition }) {
         ambientIntensity={0.65}
         preset='noon'
       />
+      
+      {/* Ajouter le brouillard ici */}
+      <Fog color="#a0c1ea" near={20} far={100} />
 
       <Suspense fallback={null}>
         <Grass
-          density={100000} 
-          width={5} 
-          height={5} 
-          position={[0, 0 , 0]} 
+          density={2000000} 
+          width={TERRAIN_CONFIG.size} 
+          height={TERRAIN_CONFIG.size}
+          position={[0, 0, 0]}
+          amplitude={TERRAIN_CONFIG.amplitude}
+          frequency={TERRAIN_CONFIG.frequency}
         />
       </Suspense>
 
       {/* Physics avec gravité configurée */}
       <Physics 
         gravity={[0, -9.81, 0]} 
-        debug={true}
+        debug={false}
         interpolate={true}
         colliders={false}
       >

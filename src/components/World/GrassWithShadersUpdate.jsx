@@ -2,16 +2,18 @@ import { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
+import { calculateHeight } from './Ground';
 
 // Composant GrassGPT4 : herbe animée avec shaders personnalisés et support des ombres
 export default function GrassGPT4({
   density = 10000,
   width = 50,
-  height = 5,
-  position = [0, -1, 0]
+  height = 50,
+  position = [0, 0, 0],
+  frequency = 0.1,
+  amplitude = 1
 }) {
   const meshRef = useRef();
-  const groundRef = useRef();
 
   // Chargement des textures
   const grassTexture = useTexture('/assets/textures/grass.jpg');
@@ -41,38 +43,48 @@ export default function GrassGPT4({
     for (let i = 0; i < grassCount; i++) {
       const x = (Math.random() - 0.5) * width;
       const z = (Math.random() - 0.5) * height;
+      
+      // Calculer la hauteur du terrain à cette position
+      const groundHeight = calculateHeight(x, z, frequency, amplitude);
+      
       const angle = Math.random() * Math.PI * 2;
       const baseIndex = positions.length / 3;
 
-      // Bas gauche
+      // Bas gauche - ajuster pour suivre le terrain
       positions.push(
         x - Math.sin(angle) * bladesWidth / 2,
-        0,
+        groundHeight, // Hauteur du sol
         z - Math.cos(angle) * bladesWidth / 2
       );
-      normals.push(0, 1, 0);
+      
+      // Calculer une normale approximative (pour l'éclairage)
+      const nx = -Math.sin(x * frequency) * amplitude * frequency;
+      const nz = -Math.cos(z * frequency) * amplitude * frequency;
+      const normalLength = Math.sqrt(nx * nx + 1 + nz * nz);
+      normals.push(nx / normalLength, 1 / normalLength, nz / normalLength);
+      
       uvs.push((x + width / 2) / width, (z + height / 2) / height);
       colors.push(0, 0, 0);
 
-      // Bas droit
+      // Bas droit - ajuster pour suivre le terrain
       positions.push(
         x + Math.sin(angle) * bladesWidth / 2,
-        0,
+        groundHeight, // Hauteur du sol
         z + Math.cos(angle) * bladesWidth / 2
       );
-      normals.push(0, 1, 0);
+      normals.push(nx / normalLength, 1 / normalLength, nz / normalLength);
       uvs.push((x + width / 2) / width, (z + height / 2) / height);
       colors.push(0, 0, 0);
 
-      // Milieu
-      positions.push(x, bladesHeight * 0.5, z);
-      normals.push(0, 1, 0);
+      // Milieu - ajuster pour suivre le terrain
+      positions.push(x, groundHeight + bladesHeight * 0.5, z);
+      normals.push(nx / normalLength, 1 / normalLength, nz / normalLength);
       uvs.push((x + width / 2) / width, (z + height / 2) / height);
       colors.push(0.5, 0.5, 0.5);
 
-      // Sommet
-      positions.push(x, bladesHeight, z);
-      normals.push(0, 1, 0);
+      // Sommet - ajuster pour suivre le terrain
+      positions.push(x, groundHeight + bladesHeight, z);
+      normals.push(nx / normalLength, 1 / normalLength, nz / normalLength);
       uvs.push((x + width / 2) / width, (z + height / 2) / height);
       colors.push(1, 1, 1);
 
@@ -94,7 +106,7 @@ export default function GrassGPT4({
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
     return geo;
-  }, [density, width, height]);
+  }, [density, width, height, frequency, amplitude]);
 
   // Material standard avec vent injecté via onBeforeCompile pour supporter ombres
   const material = useMemo(() => {
@@ -129,25 +141,13 @@ export default function GrassGPT4({
   });
 
   return (
-    <>
-      <mesh
-        ref={meshRef}
-        position={position}
-        geometry={geometry}
-        material={material}
-        castShadow
-        receiveShadow
-      />
-
-      <mesh
-        ref={groundRef}
-        position={[position[0], position[1] + 0.01, position[2]]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        receiveShadow
-      >
-        <planeGeometry args={[width, height]} />
-        <shadowMaterial opacity={0.5} transparent />
-      </mesh>
-    </>
+    <mesh
+      ref={meshRef}
+      position={position}
+      geometry={geometry}
+      material={material}
+      castShadow
+      receiveShadow
+    />
   );
 }
