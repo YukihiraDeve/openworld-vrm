@@ -3,10 +3,11 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
 // Intervalles pour les bruits de pas (en secondes)
-const WALK_STEP_INTERVAL = 0.5;
-const RUN_STEP_INTERVAL = 0.3;
+// Supprimer ces constantes d'ici, elles sont dans FootstepAudio
+// const WALK_STEP_INTERVAL = 0.5;
+// const RUN_STEP_INTERVAL = 0.3;
 
-export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarRef, audioListener, stepSoundBuffers) {
+export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarRef) {
   const [locomotion, setLocomotion] = useState('idle');
   const [movementDirection, setMovementDirection] = useState(new THREE.Vector3(0, 0, 0));
   const [cameraAngle, setCameraAngle] = useState({ horizontal: 0, vertical: Math.PI / 8 });
@@ -15,45 +16,6 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
   const lastPosition = useRef(new THREE.Vector3());
   const lastQuaternion = useRef(new THREE.Quaternion());
   const lastLocomotion = useRef(locomotion);
-  const lastStepTime = useRef(0); // Pour suivre le temps du dernier pas
-  const stepSounds = useRef([]); // Stocker les instances PositionalAudio locales ici
-
-  // Créer les PositionalAudio pour ce joueur lorsque l'avatar et l'audio sont prêts
-  useEffect(() => {
-    // Vérifier si l'avatar est prêt (contient le groupe visuel)
-    // et si l'audioListener et les buffers sont disponibles
-    if (avatarRef.current && audioListener && stepSoundBuffers?.current?.length > 0 && stepSounds.current.length === 0) {
-      const sounds = stepSoundBuffers.current.map(buffer => {
-        const sound = new THREE.PositionalAudio(audioListener);
-        sound.setBuffer(buffer);
-        sound.setRefDistance(1); 
-        sound.setRolloffFactor(1);
-        sound.setVolume(0.5); 
-        avatarRef.current.add(sound); // Attacher directement à l'avatar du joueur local
-        return sound;
-      });
-      stepSounds.current = sounds;
-      console.log("PositionalAudio créé pour le joueur local dans usePlayerMovement.");
-    }
-    
-    // Nettoyage lors du démontage ou si l'avatar change
-    return () => {
-      if (avatarRef.current && stepSounds.current.length > 0) {
-        stepSounds.current.forEach(sound => {
-          if (sound.isPlaying) {
-            sound.stop();
-          }
-          // Vérifier si sound.parent existe et est bien l'avatar avant de remove
-          if (sound.parent === avatarRef.current) {
-             avatarRef.current.remove(sound);
-          }
-        });
-        stepSounds.current = []; 
-        console.log("PositionalAudio nettoyé pour le joueur local dans usePlayerMovement.");
-      }
-    };
-    // Dépendre de l'avatar, de l'audioListener et de la présence des buffers
-  }, [avatarRef.current, audioListener, stepSoundBuffers?.current]); 
 
   const updateMovement = useCallback((keysPressed) => {
     const horizontalAngle = cameraAngleRef.current.horizontal;
@@ -149,22 +111,6 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
   }, [cameraAngle]);
 
   useFrame((state, delta) => {
-    // Déclenchement des sons de pas
-    const currentTime = state.clock.elapsedTime;
-    if ((locomotion === 'walk' || locomotion === 'run') && stepSounds.current?.length > 0) {
-      const interval = locomotion === 'run' ? RUN_STEP_INTERVAL : WALK_STEP_INTERVAL;
-      if (currentTime - lastStepTime.current >= interval) {
-        const randomIndex = Math.floor(Math.random() * stepSounds.current.length);
-        const soundToPlay = stepSounds.current[randomIndex];
-        if (soundToPlay && !soundToPlay.isPlaying) {
-          soundToPlay.play();
-          // Optionnel: ajuster légèrement le pitch pour plus de variété
-          // soundToPlay.setPlaybackRate(1 + Math.random() * 0.2 - 0.1); 
-        }
-        lastStepTime.current = currentTime;
-      }
-    }
-
     // Vérifier si l'avatar et son rigidBody sont prêts, et si emitPlayerMove existe
     if (!avatarRef?.current?.rigidBodyRef?.current || !emitPlayerMove) {
       return;

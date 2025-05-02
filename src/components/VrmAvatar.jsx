@@ -6,15 +6,12 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import * as THREE from 'three';
 import { mixamoVRMRigMap } from '../utils/const'; 
 import { RigidBody, CapsuleCollider } from '@react-three/rapier';
+import FootstepAudio from './audio/FootstepAudio';
 
 // Cache global pour les modèles déjà chargés
 const loadedModels = new Map();
 const yAxis = new THREE.Vector3(0, 1, 0); // Pré-calculer l'axe Y
 const targetQuaternion = new THREE.Quaternion(); // Réutiliser le quaternion cible
-
-// Importer les constantes d'intervalle (ou les définir ici)
-const WALK_STEP_INTERVAL = 0.5;
-const RUN_STEP_INTERVAL = 0.3;
 
 async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
   const loader = new FBXLoader();
@@ -110,10 +107,6 @@ export default function VrmAvatar({
   const currentActionRef = useRef(null); 
   const [modelLoaded, setModelLoaded] = useState(false); // Pour le callback onLoad
 
-  // Refs pour la gestion audio des joueurs distants
-  const remoteStepSounds = useRef([]);
-  const lastRemoteStepTime = useRef(0);
-
   // Ref pour stocker les dernières valeurs de props pour useFrame
   const latestPropsRef = useRef({ position, rotation });
 
@@ -121,39 +114,6 @@ export default function VrmAvatar({
   useEffect(() => {
     latestPropsRef.current = { position, rotation };
   }, [position, rotation]);
-
-  // Effet pour créer les sons PositionalAudio pour les joueurs DISTANTS
-  useEffect(() => {
-    // Uniquement pour les joueurs distants ET si les props audio/avatar sont valides
-    if (!capsuleCollider && groupRef.current && audioListener && stepSoundBuffers?.current?.length > 0 && remoteStepSounds.current.length === 0) {
-      const sounds = stepSoundBuffers.current.map(buffer => {
-        const sound = new THREE.PositionalAudio(audioListener);
-        sound.setBuffer(buffer);
-        sound.setRefDistance(1);
-        sound.setRolloffFactor(1);
-        sound.setVolume(0.5); 
-        groupRef.current.add(sound); // Attacher au groupe de l'avatar distant
-        return sound;
-      });
-      remoteStepSounds.current = sounds;
-      console.log("PositionalAudio créé pour l'avatar distant.", groupRef.current.uuid);
-    }
-
-    // Nettoyage
-    return () => {
-      if (groupRef.current && remoteStepSounds.current.length > 0) {
-        remoteStepSounds.current.forEach(sound => {
-          if (sound.isPlaying) sound.stop();
-          if (sound.parent === groupRef.current) {
-            groupRef.current.remove(sound);
-          }
-        });
-        remoteStepSounds.current = [];
-        console.log("PositionalAudio nettoyé pour l'avatar distant.", groupRef.current?.uuid);
-      }
-    };
-  // Dépendances : s'exécute si c'est un joueur distant, que le groupe existe, et que l'audio est prêt
-  }, [capsuleCollider, groupRef.current, audioListener, stepSoundBuffers?.current]);
 
   // Fonction pour charger les animations
   const loadAnimations = async (loadedVrmInstance, animMixer) => {
@@ -313,23 +273,6 @@ export default function VrmAvatar({
       vrmRef.current.update(delta);
     }
 
-    // Gestion des sons pour les joueurs DISTANTS
-    if (!capsuleCollider && remoteStepSounds.current.length > 0 && (locomotion === 'walk' || locomotion === 'run')) {
-      const currentTime = state.clock.elapsedTime;
-      const interval = locomotion === 'run' ? RUN_STEP_INTERVAL : WALK_STEP_INTERVAL;
-      
-      if (currentTime - lastRemoteStepTime.current >= interval) {
-        const randomIndex = Math.floor(Math.random() * remoteStepSounds.current.length);
-        const soundToPlay = remoteStepSounds.current[randomIndex];
-        if (soundToPlay && !soundToPlay.isPlaying) {
-          soundToPlay.play();
-          // Optionnel : ajuster le pitch
-          // soundToPlay.setPlaybackRate(1 + Math.random() * 0.2 - 0.1);
-        }
-        lastRemoteStepTime.current = currentTime;
-      }
-    }
-
     // 3. Gérer la position et la rotation
     if (groupRef.current) {
       // Si physique activée (joueur local)
@@ -462,6 +405,14 @@ export default function VrmAvatar({
         {/* Le groupe visuel est un enfant du RigidBody */}
         <group ref={groupRef} scale={scale}>
           {/* Le modèle VRM sera ajouté ici par useEffect */}
+          {audioListener && stepSoundBuffers && (
+            <FootstepAudio 
+              audioListener={audioListener}
+              stepSoundBuffers={stepSoundBuffers}
+              targetRef={groupRef} // Le groupe visuel contient les sons
+              locomotion={locomotion}
+            />
+          )}
         </group>
         {/* Le collider physique est aussi un enfant du RigidBody */}
         <CapsuleCollider
@@ -480,6 +431,14 @@ export default function VrmAvatar({
         // La rotation sera appliquée dans useFrame
       >
         {/* Le modèle VRM sera ajouté ici par useEffect */}
+        {audioListener && stepSoundBuffers && (
+          <FootstepAudio 
+            audioListener={audioListener}
+            stepSoundBuffers={stepSoundBuffers}
+            targetRef={groupRef} // Le groupe visuel contient les sons
+            locomotion={locomotion}
+          />
+        )}
       </group>
   );
   }

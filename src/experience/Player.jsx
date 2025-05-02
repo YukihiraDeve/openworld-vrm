@@ -59,7 +59,7 @@ export default function Player({ audioListener, stepSoundBuffers }) {
     cameraAngleRef,
     updateMovement,
     updateCameraAngleRef
-  } = usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarObjectRef, audioListener, stepSoundBuffers);
+  } = usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarObjectRef);
 
   const keysPressed = useKeyboardController(cameraAngleRef, () => updateMovement(keysPressed));
   useMouseController(setCameraAngle);
@@ -115,6 +115,8 @@ export default function Player({ audioListener, stepSoundBuffers }) {
         capsuleCollider={true}
         modelDirectionOffset={modelDirectionOffset}
         position={[0, 2, 0]}
+        audioListener={audioListener}
+        stepSoundBuffers={stepSoundBuffers}
       />    
       
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
