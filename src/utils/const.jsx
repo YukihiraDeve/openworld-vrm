@@ -21,6 +21,9 @@ export const ANIMATIONS = {
   'run': '/assets/animations/Running.fbx'
 };
 
+export const SOUNDS = {
+  'grassStep': '/assets/sfx/grassStep',
+};
 
 export const mixamoVRMRigMap = {
   mixamorigHips: 'hips',

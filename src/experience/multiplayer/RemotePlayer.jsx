@@ -3,7 +3,7 @@ import VrmAvatar from '../../components/VrmAvatar';
 import { MODELS, ANIMATIONS, MODEL_DIRECTION_OFFSETS } from '../../utils/const'; // Assurez-vous que le chemin est correct
 
 // Ce composant recevra les données d'un joueur distant et affichera son avatar
-export default function RemotePlayer({ playerData }) {
+export default function RemotePlayer({ playerData, audioListener, stepSoundBuffers, locomotion: remoteLocomotion }) {
   if (!playerData) {
     return null; 
   }
@@ -13,7 +13,6 @@ export default function RemotePlayer({ playerData }) {
 
   // Assurez-vous que les données de position existent
   const position = playerData.position ? [playerData.position.x, playerData.position.y, playerData.position.z] : [0, -1, 0];
-  const locomotion = playerData.locomotion || 'idle';
   
   // Utiliser le modèle du joueur distant s'il est spécifié, sinon utiliser un modèle par défaut
   const playerModel = playerData.model || 'WomanSkirtCharacter';
@@ -25,7 +24,7 @@ export default function RemotePlayer({ playerData }) {
   console.log(`Rendering RemotePlayer ${playerData.id}:`, {
     position,
     rotation: rotationData,
-    locomotion,
+    locomotion: remoteLocomotion,
     playerModel,
     vrmUrl: MODELS[playerModel],
   });
@@ -38,11 +37,14 @@ export default function RemotePlayer({ playerData }) {
       idleAnimationUrl={ANIMATIONS['breathing-idle']}
       walkAnimationUrl={ANIMATIONS['walking']}
       runAnimationUrl={ANIMATIONS['run']}
-      locomotion={locomotion}
+      locomotion={remoteLocomotion}
       position={position}
       rotation={rotationData}
       scale={1}
       modelDirectionOffset={modelDirectionOffset}
+      audioListener={audioListener}
+      stepSoundBuffers={stepSoundBuffers}
+      capsuleCollider={false}
     />
   );
 }
