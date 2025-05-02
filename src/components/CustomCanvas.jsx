@@ -94,7 +94,7 @@ function SceneContent({ sunPosition, setSunPosition }) {
       {/* Physics avec gravité configurée */}
       <Physics 
         gravity={[0, -9.81, 0]} 
-        debug={false}
+        debug={true}
         interpolate={true}
         colliders={false}
       >
