@@ -9,6 +9,7 @@ import RemotePlayer from '../experience/multiplayer/RemotePlayer';
 import Grass from './World/GrassWithShadersUpdate';
 import Sky from './World/Sky';
 import { SOUNDS } from '../utils/const';
+import BackgroundMusic from './audio/BackgroundMusic';
 
 // Remettre les chemins des sons ici
 const stepSoundPaths = [
@@ -70,6 +71,9 @@ function SceneContent({ sunPosition, setSunPosition }) {
 
   return (
     <>
+      {/* Ajouter la musique de fond ici, elle a besoin de l'audioListener */}
+      {audioListener && <BackgroundMusic audioListener={audioListener} />}
+      
       {/* Sky and procedural clouds */}
       <Sky
         sunPosition={[5, 12, -8]}
