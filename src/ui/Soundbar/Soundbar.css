@@ -1,0 +1,51 @@
+.soundbar-container {
+  position: fixed; /* Ou 'absolute' selon votre layout global */
+  top: 20px; /* Ajustez selon vos besoins */
+  right: 20px; /* Ajustez selon vos besoins */
+  display: flex;
+  align-items: center;
+  background-color: rgba(240, 240, 230, 0.8); /* Un fond clair légèrement transparent */
+  padding: 8px 15px;
+  border-radius: 20px; /* Coins arrondis */
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Ombre légère */
+  z-index: 1000; /* Assure qu'il est au-dessus des autres éléments */
+}
+
+.sound-icon {
+  width: 24px; /* Taille de l'icône */
+  height: 24px;
+  margin-right: 10px; /* Espace entre l'icône et le slider */
+  cursor: pointer; /* Indique qu'on peut cliquer (pour mute/unmute par exemple) */
+}
+
+.volume-slider {
+  -webkit-appearance: none; /* Supprime l'apparence par défaut sur Webkit */
+  appearance: none;
+  width: 100px; /* Largeur du slider */
+  height: 8px; /* Hauteur de la barre du slider */
+  background: #c5d8b3; /* Couleur de fond du slider (vert doux) */
+  border-radius: 5px; /* Coins arrondis pour la barre */
+  outline: none; /* Supprime le contour au focus */
+  cursor: pointer;
+}
+
+/* Style pour la poignée du slider (Chrome, Edge, Safari) */
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px; /* Taille de la poignée */
+  height: 18px;
+  background: #88a271; /* Couleur de la poignée (vert plus foncé) */
+  border-radius: 50%; /* Poignée ronde */
+  cursor: pointer;
+}
+
+/* Style pour la poignée du slider (Firefox) */
+.volume-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: #88a271;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none; /* Supprime la bordure par défaut sur Firefox */
+} 

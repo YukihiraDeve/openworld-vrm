@@ -1,11 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { useAudioContext } from '../../context/AudioContext';
 
 // TODO: Remplacer par le chemin réel de votre fichier musical
 const MUSIC_PATH = '/assets/sfx/BackgroundOST/background.mp3'; 
-const MUSIC_VOLUME = 0.08; // Volume subtil
+const BASE_MUSIC_VOLUME = 0.08; // Volume de base de cette musique
 
 export default function BackgroundMusic({ audioListener }) {
+  const { globalVolume } = useAudioContext();
   const soundRef = useRef();
 
   useEffect(() => {
@@ -31,7 +33,8 @@ export default function BackgroundMusic({ audioListener }) {
         }
         soundRef.current.setBuffer(buffer);
         soundRef.current.setLoop(true);
-        soundRef.current.setVolume(MUSIC_VOLUME);
+        // Appliquer le volume initial basé sur le contexte
+        soundRef.current.setVolume(BASE_MUSIC_VOLUME * globalVolume);
         
         // Essayer de jouer seulement si le contexte audio est débloqué (interaction utilisateur)
         // Cela peut nécessiter une interaction utilisateur initiale pour démarrer l'audio dans certains navigateurs.
@@ -63,6 +66,13 @@ export default function BackgroundMusic({ audioListener }) {
       console.log("BackgroundMusic: Nettoyage effectué.");
     };
   }, [audioListener]); // L'effet dépend de l'audioListener
+
+  // Effet séparé pour mettre à jour le volume lorsque globalVolume change
+  useEffect(() => {
+    if (soundRef.current && soundRef.current.source) { // Vérifier si le son est prêt
+      soundRef.current.setVolume(BASE_MUSIC_VOLUME * globalVolume);
+    }
+  }, [globalVolume]);
 
   // Ce composant n'a pas de rendu visuel
   return null; 

@@ -9,6 +9,8 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
   const [socket, setSocket] = useState(null);
   const [players, setPlayers] = useState({}); // { id: { position, rotation, locomotion, ... }, ... }
   const [localPlayerId, setLocalPlayerId] = useState(null);
+  // Nouvel état pour stocker le modèle assigné au joueur local
+  const [localPlayerModel, setLocalPlayerModel] = useState(null); 
 
   // Connexion et déconnexion
   useEffect(() => {
@@ -21,6 +23,14 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
     newSocket.on('connect', () => {
       console.log('Connecté au serveur Socket.IO avec ID:', newSocket.id);
       setLocalPlayerId(newSocket.id);
+    });
+
+    // Écouter l'événement 'welcome' pour recevoir le modèle assigné
+    newSocket.on('welcome', ({ id, model }) => {
+      console.log(`Modèle assigné par le serveur: ${model} pour l'ID: ${id}`);
+      setLocalPlayerModel(model);
+      // Note: L'ID local devrait déjà être défini par l'événement 'connect'
+      // mais on pourrait aussi le définir ici si nécessaire.
     });
 
     newSocket.on('disconnect', (reason) => {
@@ -58,6 +68,7 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
     socket,
     players,
     localPlayerId: localPlayerId,
+    localPlayerModel, // Ajouter le modèle local au contexte
     emitPlayerMove,
     emitPlayerAnimation,
   };

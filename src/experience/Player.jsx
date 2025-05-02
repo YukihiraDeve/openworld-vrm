@@ -24,30 +24,10 @@ export default function Player({ audioListener, stepSoundBuffers }) {
   const avatarObjectRef = useRef(null);
   const initialModelLoggedRef = useRef(false);
   
-  // Le modèle est choisi aléatoirement ici pour l'affichage local,
-  // mais ce choix n'est plus envoyé au serveur.
-  const [currentModel, setCurrentModel] = useState(() => {
-    const modelKeys = Object.keys(MODELS);
-    const randomIndex = Math.floor(Math.random() * modelKeys.length);
-    const initialModel = modelKeys[randomIndex];
-  
-    return initialModel;
-  });
-  
-  // Afficher le modèle choisi une seule fois
-  useEffect(() => {
-    if (!initialModelLoggedRef.current && !modelLoaded.current) {
-      initialModelLoggedRef.current = true;
-      modelLoaded.current = true;
-    } else if (!initialModelLoggedRef.current && modelLoaded.current) {
-      // Éviter l'affichage en double lors d'un remontage du composant
-      initialModelLoggedRef.current = true;
-    }
-  }, [currentModel]);
-
   const { 
     emitPlayerMove, 
     emitPlayerAnimation, 
+    localPlayerModel 
   } = useContext(MultiplayerContext);
 
   const {
@@ -92,8 +72,16 @@ export default function Player({ audioListener, stepSoundBuffers }) {
     }
   });
 
+  // Utiliser le modèle reçu du serveur (localPlayerModel) ou null s'il n'est pas encore arrivé
+  const currentModel = localPlayerModel;
+
   // Obtenir le décalage d'orientation pour le modèle actuel (local)
   const modelDirectionOffset = MODEL_DIRECTION_OFFSETS[currentModel] || 0;
+
+  // Ne rendre l'avatar que si le modèle a été assigné par le serveur
+  if (!currentModel) {
+    return null; // Ou un composant de chargement
+  }
 
   return (
     <>
@@ -101,7 +89,7 @@ export default function Player({ audioListener, stepSoundBuffers }) {
      
       <VrmAvatar 
         key={currentModel}
-        vrmUrl={MODELS[currentModel]} 
+        vrmUrl={MODELS[currentModel]}
         idleAnimationUrl={ANIMATIONS['breathing-idle']}
         walkAnimationUrl={ANIMATIONS['walking']}
         runAnimationUrl={ANIMATIONS['run']}
