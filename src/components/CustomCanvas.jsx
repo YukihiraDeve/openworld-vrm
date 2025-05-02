@@ -34,7 +34,7 @@ function SceneContent({ sunPosition, setSunPosition }) {
     const listener = new THREE.AudioListener();
     camera.add(listener); 
     setAudioListener(listener);
-    console.log("AudioListener ajouté à la caméra (depuis CustomCanvas)");
+
 
     // Charger les sons
     const audioLoader = new THREE.AudioLoader();
@@ -63,7 +63,6 @@ function SceneContent({ sunPosition, setSunPosition }) {
       if (camera && listener && listener.parent === camera) {
         camera.remove(listener);
       }
-      console.log("AudioListener retiré de la caméra (depuis CustomCanvas)");
     };
   }, [camera]);
 
@@ -101,17 +100,19 @@ function SceneContent({ sunPosition, setSunPosition }) {
       >
         <Ground />
         
-        {/* Player local - passer les props audio */}
-        {audioListener && stepSoundBuffers.current.length > 0 && (
+        {/* Player local - Rendu dès que l'audioListener est prêt */}
+        {audioListener && (
           <Player 
             key={playerKey} // Assurer une clé unique
             audioListener={audioListener}
-            stepSoundBuffers={stepSoundBuffers} // Passer la ref directement
+            // Passer la ref, le composant Player gérera si les buffers sont prêts
+            stepSoundBuffers={stepSoundBuffers} 
           />
         )}
         
-        {/* Joueurs distants - passer les props audio et locomotion */}
-        {audioListener && stepSoundBuffers.current.length > 0 && players && Object.entries(players).map(([id, playerData]) => {
+        {/* Joueurs distants - Rendu aussi dès que l'audioListener est prêt */}
+        {/* Assurer que 'players' existe avant de mapper */}
+        {audioListener && players && Object.entries(players).map(([id, playerData]) => {
             if (id === localPlayerId) return null;
             // Vérifier si playerData et locomotion existent
             const remoteLocomotion = playerData?.locomotion || 'idle'; 
@@ -120,7 +121,8 @@ function SceneContent({ sunPosition, setSunPosition }) {
                 key={id} 
                 playerData={playerData} 
                 audioListener={audioListener}
-                stepSoundBuffers={stepSoundBuffers} // Passer la ref
+                // Passer la ref, le composant RemotePlayer gérera si les buffers sont prêts
+                stepSoundBuffers={stepSoundBuffers} 
                 locomotion={remoteLocomotion} // Passer la locomotion distante
               />
             );

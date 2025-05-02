@@ -132,7 +132,7 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
     // Vérifier si les objets retournés sont valides
     if (!currentPositionVec || typeof currentPositionVec.x === 'undefined' || 
         !currentRotationQuat || typeof currentRotationQuat.w === 'undefined') {
-        console.log("[usePlayerMovement useFrame] Invalid position or rotation object.");
+      
         return;
     }
     

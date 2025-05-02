@@ -20,14 +20,6 @@ export default function RemotePlayer({ playerData, audioListener, stepSoundBuffe
   // Obtenir le décalage d'orientation pour le modèle du joueur distant
   const modelDirectionOffset = MODEL_DIRECTION_OFFSETS[playerModel] || 0;
 
-  // Log pour débogage
-  console.log(`Rendering RemotePlayer ${playerData.id}:`, {
-    position,
-    rotation: rotationData,
-    locomotion: remoteLocomotion,
-    playerModel,
-    vrmUrl: MODELS[playerModel],
-  });
 
   return (
     <VrmAvatar

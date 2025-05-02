@@ -15,7 +15,6 @@ const targetQuaternion = new THREE.Quaternion(); // Réutiliser le quaternion ci
 
 async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
   const loader = new FBXLoader();
-  console.log(`[${animationName}] Chargement de : ${url}`); // Log URL
   const asset = await loader.loadAsync(url);
   const clip = THREE.AnimationClip.findByName(asset.animations, 'mixamo.com');
 
@@ -172,7 +171,7 @@ export default function VrmAvatar({
     const loadVrm = async () => {
       // Vérifier si le modèle est en cache
     if (loadedModels.has(vrmUrl)) {
-      console.log(`Utilisation du modèle en cache: ${vrmUrl}`);
+    
       const cachedVrm = loadedModels.get(vrmUrl);
       vrmRef.current = cachedVrm;
       
@@ -193,15 +192,14 @@ export default function VrmAvatar({
       return;
     }
 
-      // Charger un nouveau modèle
-    console.log(`Chargement d'un nouveau modèle: ${vrmUrl}`);
+
     const loader = new GLTFLoader();
     loader.register((parser) => new VRMLoaderPlugin(parser));
 
       try {
         const gltf = await loader.loadAsync(vrmUrl);
       if (!groupRef.current) {
-            console.log("Abandon du chargement - composant peut-être démonté");
+      
         return;
       }
 
@@ -306,10 +304,7 @@ export default function VrmAvatar({
         const currentPos = latestPropsRef.current.position;
         const currentRot = latestPropsRef.current.rotation;
 
-        // Log pour vérifier les props position/rotation dans useFrame pour les joueurs distants
-         console.log(`[useFrame Remote] ID: ${vrmUrl?.split('/').pop()}`, // Utilise le nom du fichier comme pseudo-ID
-                     `Pos prop (ref): ${JSON.stringify(currentPos)}`, 
-                     `Rot prop (ref): ${JSON.stringify(currentRot)}`);
+    
 
         // Mettre à jour la position directement depuis les valeurs du ref
         if (Array.isArray(currentPos) && currentPos.length === 3) {
@@ -354,7 +349,7 @@ export default function VrmAvatar({
          if (isStuck) {
              stuckTimeRef.current += delta;
              if (stuckTimeRef.current > 0.5) {
-                 console.log("Déblocage !");
+                
                  rigidBodyRef.current.applyImpulse({ x: 0, y: 1.5, z: 0 }, true); // Boost vertical
                  rigidBodyRef.current.applyImpulse({ x: movementDirection.x * 3, y: 0, z: movementDirection.z * 3 }, true); // Boost directionnel
                  stuckTimeRef.current = 0; // Réinitialiser
@@ -372,7 +367,7 @@ export default function VrmAvatar({
 
     const interval = setInterval(() => {
         if (rigidBodyRef.current && rigidBodyRef.current.isSleeping()) {
-           console.log("RigidBody endormi, réveil !");
+          
           rigidBodyRef.current.wakeUp();
            rigidBodyRef.current.applyImpulse({ x: 0.0001, y: 0.0001, z: 0.0001 }, true);
         }

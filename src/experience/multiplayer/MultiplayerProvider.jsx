@@ -31,7 +31,6 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
 
     // Événement pour recevoir l'état de tous les joueurs (y compris soi-même au début)
     newSocket.on('updatePlayers', (serverPlayers) => {
-        console.log('Mise à jour des joueurs:', serverPlayers); // Debug
       setPlayers(serverPlayers);
     });
 
@@ -43,7 +42,6 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
   // Fonction pour émettre le mouvement du joueur local
   const emitPlayerMove = useCallback((movementData) => {
     if (socket?.connected && movementData) {
-     console.log("Emitting move:", movementData); // Debug
       socket.emit('playerMove', movementData);
     }
   }, [socket]);

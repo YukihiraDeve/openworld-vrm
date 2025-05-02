@@ -30,14 +30,13 @@ export default function Player({ audioListener, stepSoundBuffers }) {
     const modelKeys = Object.keys(MODELS);
     const randomIndex = Math.floor(Math.random() * modelKeys.length);
     const initialModel = modelKeys[randomIndex];
-    console.log(`Modèle initial choisi localement : ${initialModel}`);
+  
     return initialModel;
   });
   
   // Afficher le modèle choisi une seule fois
   useEffect(() => {
     if (!initialModelLoggedRef.current && !modelLoaded.current) {
-      console.log(`Modèle aléatoire choisi : ${currentModel}`);
       initialModelLoggedRef.current = true;
       modelLoaded.current = true;
     } else if (!initialModelLoggedRef.current && modelLoaded.current) {
