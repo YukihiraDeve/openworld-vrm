@@ -6,7 +6,7 @@ import Ground from './World/Ground';
 import Player from '../experience/Player';
 import { MultiplayerContext } from '../experience/multiplayer/MultiplayerContext';
 import RemotePlayer from '../experience/multiplayer/RemotePlayer';
-import Grass from './World/GrassWithShadersUpdate';
+import Grass from './World/Grass';
 import Sky from './World/Sky';
 import Fog from './world/Fog';
 import { SOUNDS } from '../utils/const';

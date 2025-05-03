@@ -27,6 +27,7 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "three": "^0.164.1",
+    "three-custom-shader-material": "^6.3.5",
     "three-extend-material": "^1.0.0"
   },
   "devDependencies": {
