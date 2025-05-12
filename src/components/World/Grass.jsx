@@ -1,22 +1,41 @@
-import { useRef, useMemo, useEffect } from 'react';
+import { useRef, useMemo, useEffect, useState } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
 import { calculateHeight } from './Ground';
 
 // Composant GrassGPT4 : herbe animée avec InstancedMesh pour meilleures performances
 export default function GrassGPT4({
-  density = 10000,
+  maxDensity = 10000,  // Densité maximale (près de la caméra)
   width = 50,
   height = 50,
   position = [0, 0, 0],
   frequency = 0.1,
-  amplitude = 1
+  amplitude = 1,
+  lodLevels = [
+    { distance: 0, density: 1.0 },    // Distance 0-10: densité 100%
+    { distance: 10, density: 1.0 },   // Distance 10: toujours 100%
+    { distance: 15, density: 0.9 },   // Distance 15: densité 90%
+    { distance: 20, density: 0.8 },   // Distance 20: densité 80%
+    { distance: 25, density: 0.7 },   // Distance 25: densité 70%
+    { distance: 30, density: 0.6 },   // Distance 30: densité 60%
+    { distance: 35, density: 0.5 },   // Distance 35: densité 50%
+    { distance: 40, density: 0.4 },   // Distance 40: densité 40%
+    { distance: 45, density: 0.3 },   // Distance 45: densité 30%
+    { distance: 50, density: 0.2 },   // Distance 50: densité 20%
+    { distance: 55, density: 0.1 }    // Distance 55+: densité 10%
+  ]
 }) {
   const instancedMeshRef = useRef();
   const dummyObj = useMemo(() => new THREE.Object3D(), []);
   const dummy = useMemo(() => new THREE.Matrix4(), []);
-
+  const { camera } = useThree();
+  
+  // État pour suivre la densité actuelle basée sur la distance
+  const [currentDensity, setCurrentDensity] = useState(maxDensity);
+  const [visibleInstanceCount, setVisibleInstanceCount] = useState(maxDensity);
+  const lastPosition = useRef(new THREE.Vector3());
+  
   // Chargement des textures
   const grassTexture = useTexture('/assets/textures/grass.jpg');
   const noiseTexture = useTexture('/assets/textures/grass_density2.png');
@@ -237,7 +256,7 @@ export default function GrassGPT4({
   useEffect(() => {
     if (!instancedMeshRef.current) return;
     
-    const grassCount = Math.floor(density);
+    const grassCount = Math.floor(maxDensity);
     const mesh = instancedMeshRef.current;
     
     // Attributs personnalisés pour l'animation
@@ -295,17 +314,74 @@ export default function GrassGPT4({
     mesh.geometry.setAttribute('instanceRandom', new THREE.InstancedBufferAttribute(instanceRandoms, 3));
     mesh.geometry.setAttribute('instanceHeight', new THREE.InstancedBufferAttribute(instanceHeights, 1));
     
-  }, [density, width, height, frequency, amplitude, dummyObj]);
+  }, [maxDensity, width, height, frequency, amplitude, dummyObj]);
 
-  // Mise à jour de l'uniforme time pour l'animation du vent
-  useFrame(({ clock }) => {
+  // Mise à jour de l'uniforme time pour l'animation du vent et LOD
+  useFrame(({ clock, camera }) => {
     timeUniform.value = clock.getElapsedTime();
+    
+    // Ne mettre à jour le LOD que si la caméra a bougé significativement
+    // Augmenter le seuil pour éviter des mises à jour trop fréquentes
+    if (lastPosition.current.distanceToSquared(camera.position) > 1.0) {
+      // Calculer la position centrale de l'herbe dans l'espace monde
+      const grassCenter = new THREE.Vector3(...position);
+      
+      // Calculer la distance entre la caméra et le centre de l'herbe
+      const distanceToCamera = camera.position.distanceTo(grassCenter);
+      
+      // Trouver le niveau de LOD approprié en fonction de la distance
+      let densityFactor = lodLevels[0].density; // Par défaut, utiliser la densité max
+      
+      // Parcourir les niveaux LOD pour trouver le bon facteur
+      for (let i = 0; i < lodLevels.length - 1; i++) {
+        const currLevel = lodLevels[i];
+        const nextLevel = lodLevels[i + 1];
+        
+        if (distanceToCamera >= currLevel.distance && distanceToCamera < nextLevel.distance) {
+          // Interpoler entre les deux niveaux pour une transition douce
+          const t = (distanceToCamera - currLevel.distance) / (nextLevel.distance - currLevel.distance);
+          densityFactor = THREE.MathUtils.lerp(currLevel.density, nextLevel.density, t);
+          break;
+        } else if (distanceToCamera >= nextLevel.distance && i === lodLevels.length - 2) {
+          // Au-delà du dernier seuil, utiliser la densité minimale
+          densityFactor = nextLevel.density;
+        }
+      }
+      
+      // Calculer la nouvelle densité d'herbe visible
+      const newVisibleCount = Math.floor(maxDensity * densityFactor);
+      
+      // Mettre à jour uniquement si la densité a changé significativement
+      // Augmenter le seuil pour éviter des changements mineurs trop fréquents
+      if (Math.abs(newVisibleCount - visibleInstanceCount) > maxDensity * 0.1) {
+        // Lisser la transition en limitant la vitesse de changement
+        const currentCount = instancedMeshRef.current ? instancedMeshRef.current.count : visibleInstanceCount;
+        const maxChange = maxDensity * 0.05; // Limiter le changement à 5% du total par frame
+        
+        // Calculer le pas pour cette transition
+        let stepSize = newVisibleCount - currentCount;
+        stepSize = Math.sign(stepSize) * Math.min(Math.abs(stepSize), maxChange);
+        
+        // Appliquer le changement progressif
+        const nextCount = Math.floor(currentCount + stepSize);
+        
+        setVisibleInstanceCount(nextCount);
+        
+        // Si nous avons une référence à l'instancedMesh, mettre à jour le nombre d'instances visibles
+        if (instancedMeshRef.current) {
+          instancedMeshRef.current.count = nextCount;
+        }
+      }
+      
+      // Mettre à jour la dernière position connue de la caméra
+      lastPosition.current.copy(camera.position);
+    }
   });
   
   return (
     <instancedMesh
       ref={instancedMeshRef}
-      args={[bladeGeometry, material, Math.floor(density)]}
+      args={[bladeGeometry, material, Math.floor(maxDensity)]}
       position={position}
       castShadow
       receiveShadow

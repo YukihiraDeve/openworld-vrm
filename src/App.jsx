@@ -6,6 +6,7 @@ import AssetLoader from './components/AssetLoader';
 import { Physics } from '@react-three/rapier';
 import Soundbar from './ui/Soundbar/Soundbar';
 import { AudioProvider } from './context/AudioContext';
+import { Stats } from "@react-three/drei";
 
 function App() {
   const [assetsLoaded, setAssetsLoaded] = useState(false);
@@ -17,15 +18,19 @@ function App() {
       <div style={{ position: 'absolute', top: '10px', left: '10px', zIndex: 100 }}>
 
       </div>
+      
 
       <AssetLoader onLoadComplete={() => setAssetsLoaded(true)}>
         <MultiplayerProvider initialConnectionDelay={assetsLoaded ? 0 : null}>
           <CustomCanvas
             sunPosition={sunPosition}
             setSunPosition={setSunPosition}
-          />
+          >
+            <Stats />
+          </CustomCanvas>
         </MultiplayerProvider>
       </AssetLoader>
+
     </AudioProvider>
   );
 }
