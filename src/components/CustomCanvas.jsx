@@ -5,6 +5,7 @@ import { Stats, PerformanceMonitor } from '@react-three/drei';
 
 import { Physics } from '@react-three/rapier';
 import Ground from './World/Ground';
+import Environment from './World/Enviroment';
 import Player from '../experience/Player';
 import { MultiplayerContext } from '../experience/multiplayer/MultiplayerContext';
 import RemotePlayer from '../experience/multiplayer/RemotePlayer';
@@ -35,6 +36,9 @@ function SceneContent({ sunPosition, setSunPosition }) {
   const { camera } = useThree(); // Utiliser useThree ici car on est dans le Canvas
   const { players, localPlayerId } = useContext(MultiplayerContext);
   const [qualityLevel, setQualityLevel] = useState(1); // 0:low, 1:medium, 2:high
+  
+  // Ref pour la position du joueur (pour optimiser l'herbe)
+  const playerPositionRef = useRef(new THREE.Vector3(0, 0, 0));
   
   // Logique audio déplacée ici
   const [audioListener, setAudioListener] = useState(null);
@@ -204,7 +208,7 @@ function SceneContent({ sunPosition, setSunPosition }) {
       <Fog color="#a0c1ea" {...fogParams} />
 
       <Suspense fallback={null}>
-        <Grass {...grassParams} />
+        <Grass {...grassParams} playerPositionRef={playerPositionRef} />
       </Suspense>
 
       {/* Physics avec gravité configurée */}
@@ -214,6 +218,10 @@ function SceneContent({ sunPosition, setSunPosition }) {
         interpolate={true}
         colliders={false}
       >
+        {/* Terrain OBJ */}
+        <Environment />
+        
+        {/* Terrain procédural */}
         <Ground />
         
         {/* Player local - Rendu dès que l'audioListener est prêt */}
@@ -222,7 +230,8 @@ function SceneContent({ sunPosition, setSunPosition }) {
             key={playerKey} // Assurer une clé unique
             audioListener={audioListener}
             // Passer la ref, le composant Player gérera si les buffers sont prêts
-            stepSoundBuffers={stepSoundBuffers} 
+            stepSoundBuffers={stepSoundBuffers}
+            playerPositionRef={playerPositionRef}
           />
         )}
         

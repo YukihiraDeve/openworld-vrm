@@ -1,0 +1,10 @@
+# Unity terrain material file
+# Optimized for WebGL/ThreeJS: True
+newmtl Terrain_material
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+d 1.0
+illum 2
+map_Kd_wrap 0
+map_Kd Terrain_diffuse.png

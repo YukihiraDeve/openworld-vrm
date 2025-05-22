@@ -6,12 +6,13 @@ import { calculateHeight } from './Ground';
 
 // Composant GrassGPT4 : herbe animée avec InstancedMesh pour meilleures performances
 export default function GrassGPT4({
-  maxDensity = 10000,  // Densité maximale (près de la caméra)
+  maxDensity = 10000,  // Densité maximale (près du joueur)
   width = 50,
   height = 50,
   position = [0, 0, 0],
   frequency = 0.1,
   amplitude = 1,
+  playerPositionRef, // Ref vers la position du joueur
   lodLevels = [
     { distance: 0, density: 1.0 },    // Distance 0-10: densité 100%
     { distance: 10, density: 1.0 },   // Distance 10: toujours 100%
@@ -31,10 +32,11 @@ export default function GrassGPT4({
   const dummy = useMemo(() => new THREE.Matrix4(), []);
   const { camera } = useThree();
   
-  // État pour suivre la densité actuelle basée sur la distance
+  // État pour suivre la densité actuelle basée sur la distance au joueur
   const [currentDensity, setCurrentDensity] = useState(maxDensity);
   const [visibleInstanceCount, setVisibleInstanceCount] = useState(maxDensity);
-  const lastPosition = useRef(new THREE.Vector3());
+  const lastPlayerPosition = useRef(new THREE.Vector3());
+  const grassInstanceData = useRef([]); // Stocker les données de chaque instance d'herbe
   
   // Chargement des textures
   const grassTexture = useTexture('/assets/textures/grass.jpg');
@@ -263,12 +265,22 @@ export default function GrassGPT4({
     const instanceRandoms = new Float32Array(grassCount * 3);
     const instanceHeights = new Float32Array(grassCount);
     
+    // Réinitialiser les données d'instance
+    grassInstanceData.current = [];
+    
     for (let i = 0; i < grassCount; i++) {
       const x = (Math.random() - 0.5) * width;
       const z = (Math.random() - 0.5) * height;
       
       // Calculer la hauteur du terrain à cette position
       const groundHeight = calculateHeight(x, z, frequency, amplitude);
+      
+      // Stocker les données de position pour le LOD
+      grassInstanceData.current[i] = {
+        worldPosition: new THREE.Vector3(x + position[0], groundHeight + position[1], z + position[2]),
+        distanceToPlayer: 0,
+        visible: true
+      };
       
       // Rotation aléatoire autour de l'axe Y
       const angle = Math.random() * Math.PI * 2;
@@ -314,67 +326,106 @@ export default function GrassGPT4({
     mesh.geometry.setAttribute('instanceRandom', new THREE.InstancedBufferAttribute(instanceRandoms, 3));
     mesh.geometry.setAttribute('instanceHeight', new THREE.InstancedBufferAttribute(instanceHeights, 1));
     
-  }, [maxDensity, width, height, frequency, amplitude, dummyObj]);
+  }, [maxDensity, width, height, frequency, amplitude, position, dummyObj]);
 
-  // Mise à jour de l'uniforme time pour l'animation du vent et LOD
-  useFrame(({ clock, camera }) => {
+  // Mise à jour de l'uniforme time pour l'animation du vent et LOD basé sur le joueur
+  useFrame(({ clock }) => {
     timeUniform.value = clock.getElapsedTime();
     
-    // Ne mettre à jour le LOD que si la caméra a bougé significativement
-    // Augmenter le seuil pour éviter des mises à jour trop fréquentes
-    if (lastPosition.current.distanceToSquared(camera.position) > 1.0) {
-      // Calculer la position centrale de l'herbe dans l'espace monde
-      const grassCenter = new THREE.Vector3(...position);
+    // Vérifier si nous avons la position du joueur
+    if (!playerPositionRef || !playerPositionRef.current || !instancedMeshRef.current) return;
+    
+    const playerPosition = playerPositionRef.current;
+    
+    // Ne mettre à jour le LOD que si le joueur a bougé significativement
+    // Seuil augmenté pour éviter des mises à jour trop fréquentes
+    if (lastPlayerPosition.current.distanceToSquared(playerPosition) > 0.5) {
       
-      // Calculer la distance entre la caméra et le centre de l'herbe
-      const distanceToCamera = camera.position.distanceTo(grassCenter);
+      // Calculer la distance de chaque brin d'herbe au joueur
+      let visibleInstances = [];
       
-      // Trouver le niveau de LOD approprié en fonction de la distance
-      let densityFactor = lodLevels[0].density; // Par défaut, utiliser la densité max
-      
-      // Parcourir les niveaux LOD pour trouver le bon facteur
-      for (let i = 0; i < lodLevels.length - 1; i++) {
-        const currLevel = lodLevels[i];
-        const nextLevel = lodLevels[i + 1];
+      for (let i = 0; i < grassInstanceData.current.length; i++) {
+        const grassInstance = grassInstanceData.current[i];
+        const distanceToPlayer = grassInstance.worldPosition.distanceTo(playerPosition);
+        grassInstance.distanceToPlayer = distanceToPlayer;
         
-        if (distanceToCamera >= currLevel.distance && distanceToCamera < nextLevel.distance) {
-          // Interpoler entre les deux niveaux pour une transition douce
-          const t = (distanceToCamera - currLevel.distance) / (nextLevel.distance - currLevel.distance);
-          densityFactor = THREE.MathUtils.lerp(currLevel.density, nextLevel.density, t);
-          break;
-        } else if (distanceToCamera >= nextLevel.distance && i === lodLevels.length - 2) {
-          // Au-delà du dernier seuil, utiliser la densité minimale
-          densityFactor = nextLevel.density;
+        // Déterminer si cette instance devrait être visible selon le LOD
+        let shouldBeVisible = false;
+        
+        for (let j = 0; j < lodLevels.length; j++) {
+          const level = lodLevels[j];
+          
+          if (distanceToPlayer <= level.distance) {
+            // Utiliser une probabilité basée sur la densité pour cette distance
+            // Ajouter une variation aléatoire stable pour chaque instance
+            const randomSeed = (i * 0.12345) % 1; // Seed pseudo-aléatoire mais stable
+            shouldBeVisible = randomSeed < level.density;
+            break;
+          }
+        }
+        
+        // Si aucun niveau ne correspond, utiliser le dernier niveau
+        if (!shouldBeVisible && lodLevels.length > 0) {
+          const lastLevel = lodLevels[lodLevels.length - 1];
+          if (distanceToPlayer > lastLevel.distance) {
+            const randomSeed = (i * 0.12345) % 1;
+            shouldBeVisible = randomSeed < lastLevel.density;
+          }
+        }
+        
+        if (shouldBeVisible) {
+          visibleInstances.push({
+            index: i,
+            distance: distanceToPlayer
+          });
         }
       }
       
-      // Calculer la nouvelle densité d'herbe visible
-      const newVisibleCount = Math.floor(maxDensity * densityFactor);
+      // Trier par distance pour prioriser les brins les plus proches
+      visibleInstances.sort((a, b) => a.distance - b.distance);
       
-      // Mettre à jour uniquement si la densité a changé significativement
-      // Augmenter le seuil pour éviter des changements mineurs trop fréquents
-      if (Math.abs(newVisibleCount - visibleInstanceCount) > maxDensity * 0.1) {
-        // Lisser la transition en limitant la vitesse de changement
-        const currentCount = instancedMeshRef.current ? instancedMeshRef.current.count : visibleInstanceCount;
-        const maxChange = maxDensity * 0.05; // Limiter le changement à 5% du total par frame
-        
-        // Calculer le pas pour cette transition
-        let stepSize = newVisibleCount - currentCount;
-        stepSize = Math.sign(stepSize) * Math.min(Math.abs(stepSize), maxChange);
-        
-        // Appliquer le changement progressif
-        const nextCount = Math.floor(currentCount + stepSize);
-        
-        setVisibleInstanceCount(nextCount);
-        
-        // Si nous avons une référence à l'instancedMesh, mettre à jour le nombre d'instances visibles
-        if (instancedMeshRef.current) {
-          instancedMeshRef.current.count = nextCount;
+      // Limiter le nombre d'instances visibles à maxDensity
+      const finalVisibleCount = Math.min(visibleInstances.length, maxDensity);
+      
+      // Mettre à jour progressivement pour éviter les saccades
+      const currentCount = instancedMeshRef.current.count;
+      const maxChange = Math.max(1, Math.floor(maxDensity * 0.02)); // Changement maximum par frame (2%)
+      
+      let targetCount = finalVisibleCount;
+      
+      // Lisser la transition
+      if (Math.abs(targetCount - currentCount) > maxChange) {
+        if (targetCount > currentCount) {
+          targetCount = currentCount + maxChange;
+        } else {
+          targetCount = currentCount - maxChange;
         }
       }
       
-      // Mettre à jour la dernière position connue de la caméra
-      lastPosition.current.copy(camera.position);
+      // Réorganiser les matrices pour que les instances visibles soient au début
+      if (targetCount !== currentCount && targetCount <= finalVisibleCount) {
+        const mesh = instancedMeshRef.current;
+        
+        // Copier les matrices des instances visibles au début
+        for (let i = 0; i < Math.min(targetCount, visibleInstances.length); i++) {
+          const originalIndex = visibleInstances[i].index;
+          
+          // Récupérer la matrice originale
+          const matrix = new THREE.Matrix4();
+          mesh.getMatrixAt(originalIndex, matrix);
+          
+          // La placer au début (à l'index i)
+          mesh.setMatrixAt(i, matrix);
+        }
+        
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.count = targetCount;
+        
+        setVisibleInstanceCount(targetCount);
+      }
+      
+      // Mettre à jour la dernière position connue du joueur
+      lastPlayerPosition.current.copy(playerPosition);
     }
   });
   

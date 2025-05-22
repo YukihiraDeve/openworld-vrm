@@ -14,7 +14,7 @@ const modelLoaded = { current: false };
 // Chemins vers les sons de pas
 // const stepSoundPaths = [...];
 
-export default function Player({ audioListener, stepSoundBuffers }) {
+export default function Player({ audioListener, stepSoundBuffers, playerPositionRef }) {
   // const { camera } = useThree();
   // const [audioListener, setAudioListener] = useState(null);
   // const [stepSounds, setStepSounds] = useState([]);
@@ -55,6 +55,12 @@ export default function Player({ audioListener, stepSoundBuffers }) {
   useFrame(() => {
     if (avatarObjectRef.current) {
       const playerPosition = avatarObjectRef.current.position;
+      
+      // Mettre à jour la position du joueur pour l'optimisation de l'herbe
+      if (playerPositionRef) {
+        playerPositionRef.current.copy(playerPosition);
+      }
+      
       const directionalLights = [];
       
       // Recherche plus large des lumières dans la scène
