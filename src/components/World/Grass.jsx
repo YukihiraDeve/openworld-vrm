@@ -5,6 +5,10 @@ import { useTexture } from '@react-three/drei';
 import { calculateHeight } from './Ground';
 import { isPositionOnPath, getPathTransitionFactor } from './Paths';
 
+// Pool d'objets pour éviter les allocations
+const tempVector3 = new THREE.Vector3();
+const tempMatrix4 = new THREE.Matrix4();
+
 // Composant GrassGPT4 : herbe animée avec InstancedMesh pour meilleures performances
 export default function GrassGPT4({
   maxDensity = 10000,  // Densité maximale (près du joueur)
@@ -32,14 +36,19 @@ export default function GrassGPT4({
 }) {
   const instancedMeshRef = useRef();
   const dummyObj = useMemo(() => new THREE.Object3D(), []);
-  const dummy = useMemo(() => new THREE.Matrix4(), []);
   const { camera } = useThree();
   
-  // État pour suivre la densité actuelle basée sur la distance au joueur
-  const [currentDensity, setCurrentDensity] = useState(maxDensity);
+  // État optimisé pour le LOD
   const [visibleInstanceCount, setVisibleInstanceCount] = useState(maxDensity);
   const lastPlayerPosition = useRef(new THREE.Vector3());
   const grassInstanceData = useRef([]); // Stocker les données de chaque instance d'herbe
+  const lastUpdateTime = useRef(0);
+  const updateQueue = useRef([]);
+  const batchSize = useRef(100); // Traiter 100 instances par frame max
+  
+  // Cache pour les calculs de distance
+  const distanceCache = useRef(new Map());
+  const cacheInvalidationThreshold = 5.0; // Distance pour invalider le cache
   
   // Chargement des textures
   const grassTexture = useTexture('/assets/textures/grass.jpg');
@@ -59,7 +68,7 @@ export default function GrassGPT4({
     noiseTexture.magFilter = THREE.LinearFilter;
   }, [grassTexture, noiseTexture]);
 
-  // Création de la géométrie d'un brin d'herbe
+  // Création de la géométrie d'un brin d'herbe (simplifiée pour les performances)
   const bladeGeometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
     const positions = [];
@@ -68,97 +77,41 @@ export default function GrassGPT4({
     const colors = [];
     const indices = [];
 
-    // Paramètres pour un brin d'herbe plus naturel et fin
-    const bladesWidth = 0.025;  // Beaucoup plus fin
+    // Géométrie simplifiée à 6 points au lieu de 10
+    const bladesWidth = 0.025;
     const bladesHeight = 0.2;
     
-    // Créer une forme plus homogène avec plusieurs points et une courbe plus naturelle
-    // Base - plus large
+    // Base
     positions.push(-bladesWidth / 2, 0, 0);           // Point 0: bas gauche
     positions.push(bladesWidth / 2, 0, 0);            // Point 1: bas droit
     
-    // Premier tiers - courbe légère
-    const lowerWidth = bladesWidth * 0.9;
-    positions.push(-lowerWidth / 2, bladesHeight * 0.2, 0.01);  // Point 2: léger décalage vers l'avant
-    positions.push(lowerWidth / 2, bladesHeight * 0.2, 0.01);   // Point 3: léger décalage vers l'avant
-    
-    // Milieu - courbe plus prononcée
+    // Milieu
     const middleWidth = bladesWidth * 0.7;
-    positions.push(-middleWidth / 2, bladesHeight * 0.5, 0.015);  // Point 4: décalage avant plus prononcé
-    positions.push(middleWidth / 2, bladesHeight * 0.5, 0.015);   // Point 5: décalage avant plus prononcé
+    positions.push(-middleWidth / 2, bladesHeight * 0.6, 0.01);  // Point 2
+    positions.push(middleWidth / 2, bladesHeight * 0.6, 0.01);   // Point 3
     
-    // Tiers supérieur
-    const upperWidth = bladesWidth * 0.3;
-    positions.push(-upperWidth / 2, bladesHeight * 0.8, 0.01);  // Point 6: retour vers l'arrière
-    positions.push(upperWidth / 2, bladesHeight * 0.8, 0.01);   // Point 7: retour vers l'arrière
+    // Pointe
+    const tipWidth = bladesWidth * 0.1;
+    positions.push(-tipWidth / 2, bladesHeight, 0);  // Point 4
+    positions.push(tipWidth / 2, bladesHeight, 0);   // Point 5
     
-    // Pointe - très fine
-    const tipWidth = bladesWidth * 0.05;
-    positions.push(-tipWidth / 2, bladesHeight, 0);  // Point 8: pointe au centre
-    positions.push(tipWidth / 2, bladesHeight, 0);   // Point 9: pointe au centre
-    
-    // Normales calculées pour suivre la courbe
-    // Base et section basse - verticales
-    for (let i = 0; i < 4; i++) {
+    // Normales simplifiées
+    for (let i = 0; i < 6; i++) {
       normals.push(0, 1, 0.1);
     }
     
-    // Section médiane - légèrement courbée
-    for (let i = 0; i < 4; i++) {
-      normals.push(0, 0.95, 0.3);
-    }
+    // UVs simplifiés
+    uvs.push(0, 0, 1, 0, 0.1, 0.6, 0.9, 0.6, 0.45, 1, 0.55, 1);
     
-    // Section supérieure - courbée vers l'arrière
-    for (let i = 0; i < 2; i++) {
-      normals.push(0, 0.9, 0.1);
-    }
+    // Couleurs pour le dégradé
+    colors.push(0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
     
-    // UVs pour le mapping de texture
-    uvs.push(0, 0);      // 0
-    uvs.push(1, 0);      // 1
-    uvs.push(0.05, 0.2); // 2
-    uvs.push(0.95, 0.2); // 3
-    uvs.push(0.1, 0.5);  // 4
-    uvs.push(0.9, 0.5);  // 5
-    uvs.push(0.3, 0.8);  // 6
-    uvs.push(0.7, 0.8);  // 7
-    uvs.push(0.48, 1);   // 8
-    uvs.push(0.52, 1);   // 9
-    
-    // Couleurs pour le dégradé (base plus foncée, sommet plus clair)
-    colors.push(0.2, 0.2, 0.2);    // 0
-    colors.push(0.2, 0.2, 0.2);    // 1
-    colors.push(0.3, 0.3, 0.3);    // 2
-    colors.push(0.3, 0.3, 0.3);    // 3
-    colors.push(0.5, 0.5, 0.5);    // 4
-    colors.push(0.5, 0.5, 0.5);    // 5
-    colors.push(0.8, 0.8, 0.8);    // 6
-    colors.push(0.8, 0.8, 0.8);    // 7
-    colors.push(1.0, 1.0, 1.0);    // 8
-    colors.push(1.0, 1.0, 1.0);    // 9
-    
-    // Triangles (faces) - division en 4 segments
+    // Triangles simplifiés
     indices.push(
-      0, 2, 1,  // Segment 1 gauche
-      1, 2, 3,  // Segment 1 droit
-      2, 4, 3,  // Segment 2 gauche
-      3, 4, 5,  // Segment 2 droit
-      4, 6, 5,  // Segment 3 gauche
-      5, 6, 7,  // Segment 3 droit
-      6, 8, 7,  // Segment 4 gauche
-      7, 8, 9   // Segment 4 droit
-    );
-    
-    // Face arrière
-    indices.push(
-      1, 2, 0,  // Segment 1 gauche inversé
-      3, 2, 1,  // Segment 1 droit inversé
-      3, 4, 2,  // Segment 2 gauche inversé
-      5, 4, 3,  // Segment 2 droit inversé
-      5, 6, 4,  // Segment 3 gauche inversé
-      7, 6, 5,  // Segment 3 droit inversé
-      7, 8, 6,  // Segment 4 gauche inversé
-      9, 8, 7   // Segment 4 droit inversé
+      0, 2, 1,  // Base gauche
+      1, 2, 3,  // Base droit
+      2, 4, 3,  // Milieu gauche
+      3, 4, 5   // Milieu droit
     );
     
     geo.setIndex(indices);
@@ -170,109 +123,74 @@ export default function GrassGPT4({
     return geo;
   }, []);
 
-  // Material standard avec vent injecté via onBeforeCompile pour supporter ombres
+  // Material optimisé avec shader simplifié
   const material = useMemo(() => {
     const mat = new THREE.MeshStandardMaterial({
       map: grassTexture,
       alphaMap: noiseTexture,
       transparent: true,
-      side: THREE.DoubleSide,  // Assurez-vous que c'est bien DoubleSide
+      side: THREE.DoubleSide,
       vertexColors: true,
-      alphaTest: 0.1,  // Réduit pour éviter la coupure de texture
-      depthWrite: true  // Important pour le rendu correct des transparences
+      alphaTest: 0.1,
+      depthWrite: true
     });
 
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = 'uniform float time;\n' + shader.vertexShader;
       shader.uniforms.time = timeUniform;
       
-      // Ajouter des attributs personnalisés pour l'animation du vent
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <common>',
-        `#include <common>
-        attribute vec3 instanceRandom;
-        attribute float instanceHeight;
-        
-        // Fonctions de bruit pour créer un mouvement plus naturel
-        // Simplex noise 2D
-        vec3 permute(vec3 x) { return mod(((x*34.0)+1.0)*x, 289.0); }
-        
-        float snoise(vec2 v){
-          const vec4 C = vec4(0.211324865405187, 0.366025403784439,
-                             -0.577350269189626, 0.024390243902439);
-          vec2 i  = floor(v + dot(v, C.yy));
-          vec2 x0 = v -   i + dot(i, C.xx);
-          vec2 i1;
-          i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-          vec4 x12 = x0.xyxy + C.xxzz;
-          x12.xy -= i1;
-          i = mod(i, 289.0);
-          vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
-                           + i.x + vec3(0.0, i1.x, 1.0 ));
-          vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy),
-                                dot(x12.zw,x12.zw)), 0.0);
-          m = m*m;
-          m = m*m;
-          vec3 x = 2.0 * fract(p * C.www) - 1.0;
-          vec3 h = abs(x) - 0.5;
-          vec3 ox = floor(x + 0.5);
-          vec3 a0 = x - ox;
-          m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
-          vec3 g;
-          g.x  = a0.x  * x0.x  + h.x  * x0.y;
-          g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-          return 130.0 * dot(m, g);
-        }`
-      );
-      
+      // Shader simplifié pour de meilleures performances
       shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-         // Créer des valeurs uniques pour chaque instance
-         float uniqueTime = time * (0.7 + instanceRandom.x * 0.6);
-         float uniquePhase = instanceRandom.y * 6.28; // Phase aléatoire différente pour chaque brin
-         
-         // Variation de la force du vent basée sur la position
-         vec2 windPos = vec2(instanceMatrix[3][0] * 0.1, instanceMatrix[3][2] * 0.1);
-         float windVariation = snoise(windPos + vec2(time * 0.3, time * 0.2)) * 0.5 + 0.5;
-         
-         // Amplitude qui dépend de la hauteur (plus fort en haut)
-         float heightFactor = color.r; // Utilisation des couleurs existantes pour l'amplitude
-         
-         // Combiner plusieurs fréquences pour un mouvement plus naturel
-         float windNoise1 = sin(uniqueTime * 0.8 + uniquePhase) * 0.4;
-         float windNoise2 = sin(uniqueTime * 1.2 + uniquePhase * 2.0) * 0.2;
-         float windNoise3 = snoise(windPos + time * vec2(0.1, 0.12)) * 0.3;
-         
-         // Mouvements combinés avec des fréquences différentes
-         float windEffect = (windNoise1 + windNoise2 + windNoise3) * windVariation;
-         
-         // Appliquer le mouvement
-         float strength = 0.3 * heightFactor;
-         transformed.x += windEffect * strength;
-         transformed.z += windEffect * strength * 0.7;`
+         float windTime = time * 0.8;
+         float heightFactor = color.r;
+         float windEffect = sin(windTime + position.x * 0.1 + position.z * 0.1) * 0.3;
+         transformed.x += windEffect * heightFactor * 0.3;
+         transformed.z += windEffect * heightFactor * 0.2;`
       );
     };
 
     return mat;
   }, [grassTexture, noiseTexture, timeUniform]);
 
-  // Initialisation des instances
+  // Fonction optimisée pour calculer la visibilité
+  const calculateInstanceVisibility = (instance, playerPos) => {
+    const distanceToPlayer = instance.worldPosition.distanceTo(playerPos);
+    instance.distanceToPlayer = distanceToPlayer;
+    
+    // Recherche optimisée du niveau LOD
+    for (let j = 0; j < lodLevels.length; j++) {
+      const level = lodLevels[j];
+      if (distanceToPlayer <= level.distance) {
+        const randomSeed = (instance.index * 0.12345) % 1;
+        return randomSeed < level.density;
+      }
+    }
+    
+    // Dernier niveau
+    if (lodLevels.length > 0) {
+      const lastLevel = lodLevels[lodLevels.length - 1];
+      const randomSeed = (instance.index * 0.12345) % 1;
+      return randomSeed < lastLevel.density;
+    }
+    
+    return false;
+  };
+
+  // Initialisation des instances (optimisée)
   useEffect(() => {
     if (!instancedMeshRef.current) return;
     
     const grassCount = Math.floor(maxDensity);
     const mesh = instancedMeshRef.current;
     
-    // Attributs personnalisés pour l'animation
-    const instanceRandoms = new Float32Array(grassCount * 3);
-    const instanceHeights = new Float32Array(grassCount);
-    
     // Réinitialiser les données d'instance
     grassInstanceData.current = [];
+    distanceCache.current.clear();
     
     let validInstanceCount = 0;
-    const maxAttempts = grassCount * 3; // Limite pour éviter une boucle infinie
+    const maxAttempts = grassCount * 2; // Réduire les tentatives
     let attempts = 0;
     
     while (validInstanceCount < grassCount && attempts < maxAttempts) {
@@ -281,185 +199,120 @@ export default function GrassGPT4({
       
       attempts++;
       
-      // Calculer le facteur de transition pour cette position (0 = pas d'herbe, 1 = herbe complète)
+      // Vérification simplifiée des chemins
       const transitionFactor = paths.length > 0 ? getPathTransitionFactor(x, z, paths, 1.5) : 1;
+      if (Math.random() > transitionFactor) continue;
       
-      // Utiliser une probabilité basée sur le facteur de transition pour un fondu naturel
-      const shouldGenerateGrass = Math.random() < transitionFactor;
-      
-      // Si cette position ne devrait pas avoir d'herbe selon la probabilité, passer à la suivante
-      if (!shouldGenerateGrass) {
-        continue;
-      }
-      
-      // Calculer la hauteur du terrain à cette position
       const groundHeight = calculateHeight(x, z, frequency, amplitude);
       
-      // Stocker les données de position pour le LOD
+      // Stocker les données avec index pour la stabilité
       grassInstanceData.current[validInstanceCount] = {
+        index: validInstanceCount,
         worldPosition: new THREE.Vector3(x + position[0], groundHeight + position[1], z + position[2]),
         distanceToPlayer: 0,
         visible: true,
-        transitionFactor: transitionFactor // Stocker pour référence future
+        transitionFactor: transitionFactor
       };
       
-      // Rotation aléatoire autour de l'axe Y
-      const angle = Math.random() * Math.PI * 2;
-      
-      // Légère inclinaison aléatoire
-      const tiltAngle = Math.random() * 0.2;
-      const tiltDirection = Math.random() * Math.PI * 2;
-      
-      // Appliquer la transformation
+      // Configuration de l'instance
       dummyObj.position.set(x, groundHeight, z);
+      dummyObj.rotation.set(0, Math.random() * Math.PI * 2, 0);
       
-      // Rotation avec une légère inclinaison aléatoire
-      dummyObj.rotation.set(
-        Math.sin(tiltDirection) * tiltAngle, // Inclinaison X
-        angle, // Rotation Y
-        Math.cos(tiltDirection) * tiltAngle  // Inclinaison Z
-      );
+      const baseScale = 0.8 + Math.random() * 0.4;
+      const pathInfluence = Math.pow(transitionFactor, 0.5);
+      const scaleMultiplier = 0.7 + 0.3 * pathInfluence;
       
-      // Échelle plus fine et variable pour chaque brin, influencée par la proximité du chemin
-      const baseScale = 1.0 + Math.random() * 0.7; // Base plus fine
-      const heightVariation = 0.7 + Math.random() * 0.6; // Plus de variation en hauteur
-      
-      // Réduire légèrement la taille de l'herbe près des chemins pour un effet de foulage
-      const pathInfluence = Math.pow(transitionFactor, 0.5); // Effet plus doux
-      const scaleMultiplier = 0.6 + 0.4 * pathInfluence; // L'herbe est 60-100% de sa taille normale
-      
-      dummyObj.scale.set(
-        baseScale * scaleMultiplier, // Largeur influencée par proximité chemin
-        baseScale * heightVariation * scaleMultiplier, // Hauteur influencée par proximité chemin
-        baseScale * scaleMultiplier  // Profondeur influencée par proximité chemin
-      );
-      
+      dummyObj.scale.setScalar(baseScale * scaleMultiplier);
       dummyObj.updateMatrix();
       mesh.setMatrixAt(validInstanceCount, dummyObj.matrix);
-      
-      // Stocker des valeurs vraiment aléatoires pour l'animation du vent
-      instanceRandoms[validInstanceCount * 3] = Math.random();     // Variation de vitesse
-      instanceRandoms[validInstanceCount * 3 + 1] = Math.random(); // Variation de phase
-      instanceRandoms[validInstanceCount * 3 + 2] = Math.random(); // Réserve pour d'autres usages
-      instanceHeights[validInstanceCount] = groundHeight;
       
       validInstanceCount++;
     }
     
-    // Si nous n'avons pas pu générer assez d'instances, ajuster le compte
-    if (validInstanceCount < grassCount) {
-      console.log(`Généré ${validInstanceCount} brins d'herbe au lieu de ${grassCount} (chemins exclus)`);
-      // Réduire la taille des arrays aux instances valides
-      grassInstanceData.current = grassInstanceData.current.slice(0, validInstanceCount);
-    }
-    
-    // Définir les attributs d'instance
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.count = validInstanceCount; // Mettre à jour le nombre d'instances réelles
+    mesh.count = validInstanceCount;
     
-    // Optionnel: ajout d'attributs personnalisés pour l'animation
-    mesh.geometry.setAttribute('instanceRandom', new THREE.InstancedBufferAttribute(instanceRandoms, 3));
-    mesh.geometry.setAttribute('instanceHeight', new THREE.InstancedBufferAttribute(instanceHeights, 1));
+    console.log(`Optimized Grass: Generated ${validInstanceCount} instances`);
     
   }, [maxDensity, width, height, frequency, amplitude, position, dummyObj, paths, pathMargin]);
 
-  // Mise à jour de l'uniforme time pour l'animation du vent et LOD basé sur le joueur
+  // Système de mise à jour progressive ultra-optimisé
   useFrame(({ clock }) => {
     timeUniform.value = clock.getElapsedTime();
     
-    // Vérifier si nous avons la position du joueur
-    if (!playerPositionRef || !playerPositionRef.current || !instancedMeshRef.current) return;
+    if (!playerPositionRef?.current || !instancedMeshRef.current) return;
     
     const playerPosition = playerPositionRef.current;
+    const now = performance.now();
     
-    // Ne mettre à jour le LOD que si le joueur a bougé significativement
-    // Seuil augmenté pour éviter des mises à jour trop fréquentes
-    if (lastPlayerPosition.current.distanceToSquared(playerPosition) > 0.5) {
-      
-      // Calculer la distance de chaque brin d'herbe au joueur
-      let visibleInstances = [];
-      
+    // Throttling : mise à jour maximum toutes les 100ms
+    if (now - lastUpdateTime.current < 100) return;
+    
+    // Vérifier si le joueur a bougé significativement (seuil augmenté)
+    if (lastPlayerPosition.current.distanceToSquared(playerPosition) < 2.0) return;
+    
+    lastUpdateTime.current = now;
+    
+    // Mise à jour progressive par batch
+    if (updateQueue.current.length === 0) {
+      // Remplir la queue avec les indices à traiter
       for (let i = 0; i < grassInstanceData.current.length; i++) {
-        const grassInstance = grassInstanceData.current[i];
-        const distanceToPlayer = grassInstance.worldPosition.distanceTo(playerPosition);
-        grassInstance.distanceToPlayer = distanceToPlayer;
-        
-        // Déterminer si cette instance devrait être visible selon le LOD
-        let shouldBeVisible = false;
-        
-        for (let j = 0; j < lodLevels.length; j++) {
-          const level = lodLevels[j];
-          
-          if (distanceToPlayer <= level.distance) {
-            // Utiliser une probabilité basée sur la densité pour cette distance
-            // Ajouter une variation aléatoire stable pour chaque instance
-            const randomSeed = (i * 0.12345) % 1; // Seed pseudo-aléatoire mais stable
-            shouldBeVisible = randomSeed < level.density;
-            break;
-          }
-        }
-        
-        // Si aucun niveau ne correspond, utiliser le dernier niveau
-        if (!shouldBeVisible && lodLevels.length > 0) {
-          const lastLevel = lodLevels[lodLevels.length - 1];
-          if (distanceToPlayer > lastLevel.distance) {
-            const randomSeed = (i * 0.12345) % 1;
-            shouldBeVisible = randomSeed < lastLevel.density;
-          }
-        }
-        
-        if (shouldBeVisible) {
-          visibleInstances.push({
-            index: i,
-            distance: distanceToPlayer
-          });
+        updateQueue.current.push(i);
+      }
+    }
+    
+    // Traiter un batch d'instances
+    const instancesToProcess = updateQueue.current.splice(0, batchSize.current);
+    let visibleInstances = [];
+    
+    // Récupérer les instances déjà visibles
+    for (let i = 0; i < Math.min(visibleInstanceCount, grassInstanceData.current.length); i++) {
+      const instance = grassInstanceData.current[i];
+      if (instance) {
+        visibleInstances.push({ index: i, distance: instance.distanceToPlayer || 0 });
+      }
+    }
+    
+    // Traiter le batch actuel
+    instancesToProcess.forEach(index => {
+      if (index < grassInstanceData.current.length) {
+        const instance = grassInstanceData.current[index];
+        if (calculateInstanceVisibility(instance, playerPosition)) {
+          visibleInstances.push({ index, distance: instance.distanceToPlayer });
         }
       }
-      
-      // Trier par distance pour prioriser les brins les plus proches
+    });
+    
+    // Si on a fini de traiter toutes les instances
+    if (updateQueue.current.length === 0) {
+      // Trier et limiter
       visibleInstances.sort((a, b) => a.distance - b.distance);
+      const targetCount = Math.min(visibleInstances.length, maxDensity);
       
-      // Limiter le nombre d'instances visibles à maxDensity
-      const finalVisibleCount = Math.min(visibleInstances.length, maxDensity);
-      
-      // Mettre à jour progressivement pour éviter les saccades
+      // Mise à jour douce du count pour éviter les saccades
       const currentCount = instancedMeshRef.current.count;
-      const maxChange = Math.max(1, Math.floor(maxDensity * 0.02)); // Changement maximum par frame (2%)
+      const maxChange = Math.max(50, Math.floor(maxDensity * 0.05)); // 5% max change
       
-      let targetCount = finalVisibleCount;
-      
-      // Lisser la transition
-      if (Math.abs(targetCount - currentCount) > maxChange) {
-        if (targetCount > currentCount) {
-          targetCount = currentCount + maxChange;
-        } else {
-          targetCount = currentCount - maxChange;
-        }
+      let newCount = targetCount;
+      if (Math.abs(newCount - currentCount) > maxChange) {
+        newCount = currentCount + (newCount > currentCount ? maxChange : -maxChange);
       }
       
-      // Réorganiser les matrices pour que les instances visibles soient au début
-      if (targetCount !== currentCount && targetCount <= finalVisibleCount) {
+      // Réorganiser les matrices seulement si nécessaire
+      if (newCount !== currentCount) {
         const mesh = instancedMeshRef.current;
         
-        // Copier les matrices des instances visibles au début
-        for (let i = 0; i < Math.min(targetCount, visibleInstances.length); i++) {
+        for (let i = 0; i < Math.min(newCount, visibleInstances.length); i++) {
           const originalIndex = visibleInstances[i].index;
-          
-          // Récupérer la matrice originale
-          const matrix = new THREE.Matrix4();
-          mesh.getMatrixAt(originalIndex, matrix);
-          
-          // La placer au début (à l'index i)
-          mesh.setMatrixAt(i, matrix);
+          mesh.getMatrixAt(originalIndex, tempMatrix4);
+          mesh.setMatrixAt(i, tempMatrix4);
         }
         
         mesh.instanceMatrix.needsUpdate = true;
-        mesh.count = targetCount;
-        
-        setVisibleInstanceCount(targetCount);
+        mesh.count = newCount;
+        setVisibleInstanceCount(newCount);
       }
       
-      // Mettre à jour la dernière position connue du joueur
       lastPlayerPosition.current.copy(playerPosition);
     }
   });
@@ -471,7 +324,7 @@ export default function GrassGPT4({
       position={position}
       castShadow
       receiveShadow
-      frustumCulled={false} // Important: empêche la disparition de l'herbe aux bords de l'écran
+      frustumCulled={false}
     />
   );
 }

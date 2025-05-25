@@ -33,51 +33,157 @@ const TERRAIN_CONFIG = {
   frequency: 0.1
 };
 
+// Système de gestion de performance intelligent
+class PerformanceManager {
+  constructor() {
+    this.frameTimings = [];
+    this.lastUpdate = 0;
+    this.currentQualityLevel = 1; // 0: low, 1: medium, 2: high
+    this.qualityChangeCallbacks = [];
+    this.adaptationSpeed = 0.1;
+    this.targetFPS = 60;
+    this.minAcceptableFPS = 25; // Réduit de 30 à 25 pour être moins agressif
+    this.autoAdaptationEnabled = true; // Nouveau: permet de désactiver l'adaptation auto
+  }
+
+  addQualityChangeCallback(callback) {
+    this.qualityChangeCallbacks.push(callback);
+  }
+
+  removeQualityChangeCallback(callback) {
+    const index = this.qualityChangeCallbacks.indexOf(callback);
+    if (index > -1) {
+      this.qualityChangeCallbacks.splice(index, 1);
+    }
+  }
+
+  setAutoAdaptation(enabled) {
+    this.autoAdaptationEnabled = enabled;
+    console.log(`Auto adaptation ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  setQualityLevel(level) {
+    if (level >= 0 && level <= 2) {
+      this.currentQualityLevel = level;
+      this.notifyQualityChange(level);
+      console.log(`Quality manually set to: ${level}`);
+    }
+  }
+
+  updatePerformance(deltaTime) {
+    if (!this.autoAdaptationEnabled) {
+      return; // Ne pas faire d'adaptation automatique si désactivé
+    }
+
+    const now = performance.now();
+    
+    // Calculer le FPS actuel
+    const currentFPS = 1 / deltaTime;
+    this.frameTimings.push(currentFPS);
+    
+    // Garder seulement les 120 dernières mesures (plus de stabilité)
+    if (this.frameTimings.length > 120) {
+      this.frameTimings.shift();
+    }
+    
+    // Mise à jour toutes les 5 secondes (plus patient)
+    if (now - this.lastUpdate > 5000 && this.frameTimings.length >= 60) {
+      const averageFPS = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
+      const newQualityLevel = this.calculateOptimalQuality(averageFPS);
+      
+      if (newQualityLevel !== this.currentQualityLevel) {
+        console.log(`Auto quality change: ${this.currentQualityLevel} -> ${newQualityLevel} (avg FPS: ${averageFPS.toFixed(1)})`);
+        this.currentQualityLevel = newQualityLevel;
+        this.notifyQualityChange(newQualityLevel);
+      }
+      
+      this.lastUpdate = now;
+      // Vider une partie de l'historique pour éviter l'inertie
+      this.frameTimings = this.frameTimings.slice(-60);
+    }
+  }
+
+  calculateOptimalQuality(averageFPS) {
+    // Seuils plus permissifs pour éviter les changements trop fréquents
+    if (averageFPS >= this.targetFPS * 0.85) { // 85% au lieu de 90%
+      return Math.min(2, this.currentQualityLevel + 1); // Permettre de remonter progressivement
+    } else if (averageFPS >= this.minAcceptableFPS) {
+      return 1; // Rester en qualité moyenne
+    } else if (averageFPS < this.minAcceptableFPS * 0.8) { // Seulement si vraiment très bas
+      return 0; // Passer en basse qualité seulement si critique
+    }
+    
+    return this.currentQualityLevel; // Garder le niveau actuel par défaut
+  }
+
+  notifyQualityChange(qualityLevel) {
+    this.qualityChangeCallbacks.forEach(callback => {
+      try {
+        callback(qualityLevel);
+      } catch (error) {
+        console.error('Error in quality change callback:', error);
+      }
+    });
+  }
+
+  getQualityLevel() {
+    return this.currentQualityLevel;
+  }
+}
+
+// Instance globale du gestionnaire de performance
+const performanceManager = new PerformanceManager();
+
 // Composant interne pour gérer l'audio et le rendu
 function SceneContent({ sunPosition, setSunPosition }) {
-  const { camera } = useThree(); // Utiliser useThree ici car on est dans le Canvas
+  const { camera } = useThree();
   const { players, localPlayerId } = useContext(MultiplayerContext);
-  const [qualityLevel, setQualityLevel] = useState(1); // 0:low, 1:medium, 2:high
+  const [qualityLevel, setQualityLevel] = useState(1);
   
   // Ref pour la position du joueur (pour optimiser l'herbe)
   const playerPositionRef = useRef(new THREE.Vector3(0, 0, 0));
   
-  // Créer les chemins une seule fois
+  // Créer les chemins une seule fois avec cache
   const worldPaths = useMemo(() => createPaths(), []);
   
-  // Logique audio déplacée ici
+  // Logique audio optimisée
   const [audioListener, setAudioListener] = useState(null);
-  const stepSoundBuffers = useRef([]); // Utiliser useRef ici est suffisant
+  const stepSoundBuffers = useRef([]);
+  const audioLoadingPromise = useRef(null);
 
-  // Initialiser l'AudioListener
+  // Performance monitoring avec throttling
+  const lastPerformanceUpdate = useRef(0);
+
+  // Initialiser l'AudioListener et charger les sons de manière asynchrone
   useEffect(() => {
     const listener = new THREE.AudioListener();
     camera.add(listener); 
     setAudioListener(listener);
 
-
-    // Charger les sons
-    const audioLoader = new THREE.AudioLoader();
-    const loadPromises = stepSoundPaths.map(path => 
-      new Promise((resolve, reject) => {
-        audioLoader.load(path, buffer => {
-          console.log(`Son chargé: ${path} (depuis CustomCanvas)`);
-          resolve(buffer);
-        }, undefined, err => {
-          console.error(`Erreur de chargement du son ${path}:`, err);
-          reject(err);
-        });
-      })
-    );
-
-    Promise.all(loadPromises)
-      .then(buffers => {
-        stepSoundBuffers.current = buffers;
-        console.log("Tous les sons de pas chargés (depuis CustomCanvas).");
-      })
-      .catch(error => {
-        console.error("Erreur lors du chargement d'un ou plusieurs sons:", error);
+    // Charger les sons en parallèle avec optimisation
+    if (!audioLoadingPromise.current) {
+      audioLoadingPromise.current = Promise.all(
+        stepSoundPaths.map(path => 
+          new Promise((resolve) => {
+            const audioLoader = new THREE.AudioLoader();
+            audioLoader.load(path, 
+              buffer => {
+                console.log(`Son chargé: ${path}`);
+                resolve(buffer);
+              }, 
+              undefined, 
+              err => {
+                console.error(`Erreur de chargement du son ${path}:`, err);
+                resolve(null); // Résoudre avec null plutôt que rejeter
+              }
+            );
+          })
+        )
+      ).then(buffers => {
+        stepSoundBuffers.current = buffers.filter(buffer => buffer !== null);
+        console.log(`${stepSoundBuffers.current.length} sons de pas chargés avec succès`);
       });
+    }
 
     return () => {
       if (camera && listener && listener.parent === camera) {
@@ -86,21 +192,38 @@ function SceneContent({ sunPosition, setSunPosition }) {
     };
   }, [camera]);
 
-  const playerKey = useMemo(() => "local-player-" + Math.random().toString(36).substring(2, 9), []);
-  
-  // Ajuster les paramètres de qualité en fonction des performances
-  const handlePerformanceChange = useCallback(({ factor }) => {
-    // factor va de 0 (mauvaises performances) à 1 (excellentes performances)
-    if (factor < 0.5) {
-      setQualityLevel(0); // Basse qualité
-    } else if (factor < 0.8) {
-      setQualityLevel(1); // Qualité moyenne
-    } else {
-      setQualityLevel(2); // Haute qualité
-    }
+  // Gérer les changements de qualité
+  useEffect(() => {
+    const handleQualityChange = (newQualityLevel) => {
+      setQualityLevel(newQualityLevel);
+      console.log(`Quality level changed to: ${newQualityLevel}`);
+    };
+
+    const handleSetQualityLevel = (event) => {
+      const level = event.detail;
+      performanceManager.setQualityLevel(level);
+      setQualityLevel(level);
+    };
+
+    const handleSetAutoAdaptation = (event) => {
+      const enabled = event.detail;
+      performanceManager.setAutoAdaptation(enabled);
+    };
+
+    performanceManager.addQualityChangeCallback(handleQualityChange);
+    window.addEventListener('setQualityLevel', handleSetQualityLevel);
+    window.addEventListener('setAutoAdaptation', handleSetAutoAdaptation);
+    
+    return () => {
+      performanceManager.removeQualityChangeCallback(handleQualityChange);
+      window.removeEventListener('setQualityLevel', handleSetQualityLevel);
+      window.removeEventListener('setAutoAdaptation', handleSetAutoAdaptation);
+    };
   }, []);
 
-  // Calculer les paramètres d'herbe en fonction du niveau de qualité
+  const playerKey = useMemo(() => "local-player-" + Math.random().toString(36).substring(2, 9), []);
+  
+  // Paramètres d'herbe optimisés en fonction de la qualité
   const grassParams = useMemo(() => {
     const baseParams = {
       position: [0, 0, 0],
@@ -110,61 +233,50 @@ function SceneContent({ sunPosition, setSunPosition }) {
       height: TERRAIN_CONFIG.size
     };
     
-    // Ajuster la densité et les niveaux LOD selon la qualité
     switch (qualityLevel) {
       case 0: // Basse qualité
         return {
           ...baseParams,
-          maxDensity: 300000,
+          maxDensity: 800000, // Augmenté de 200k à 800k
           lodLevels: [
-            { distance: 0, density: 1.0 },   // Distance 0-10: densité 100%
-            { distance: 10, density: 1.0 },  // Distance 10: toujours 100%
-            { distance: 15, density: 0.9 },  // Distance 15: densité 90%
-            { distance: 20, density: 0.8 },  // Distance 20: densité 80%
-            { distance: 25, density: 0.7 },  // Distance 25: densité 70%
-            { distance: 30, density: 0.6 },  // Distance 30: densité 60%
-            { distance: 35, density: 0.4 },  // Distance 35: densité 40%
-            { distance: 40, density: 0.2 },  // Distance 40: densité 20%
-            { distance: 45, density: 0.1 }   // Distance 45+: densité 10%
+            { distance: 0, density: 1.0 },
+            { distance: 8, density: 0 },
+            { distance: 15, density: 0.6 },
+            { distance: 25, density: 0.3 },
+            { distance: 35, density: 0.1 }
           ]
         };
       case 2: // Haute qualité
         return {
           ...baseParams,
-          maxDensity: 800000,
+          maxDensity: 2000000, // Augmenté de 600k à 2M
           lodLevels: [
-            { distance: 0, density: 1.0 },    // Distance 0-10: densité 100%
-            { distance: 10, density: 1.0 },   // Distance 10: toujours 100%
-            { distance: 15, density: 0.9 },   // Distance 15: densité 90%
-            { distance: 20, density: 0.8 },   // Distance 20: densité 80%
-            { distance: 25, density: 0.7 },   // Distance 25: densité 70%
-            { distance: 30, density: 0.6 },   // Distance 30: densité 60%
-            { distance: 35, density: 0.5 },   // Distance 35: densité 50%
-            { distance: 40, density: 0.4 },   // Distance 40: densité 40%
-            { distance: 45, density: 0.3 },   // Distance 45: densité 30%
-            { distance: 50, density: 0.2 },   // Distance 50: densité 20%
-            { distance: 55, density: 0.1 }    // Distance 55+: densité 10%
+            { distance: 0, density: 1.0 },
+            { distance: 20, density: 0 },
+            { distance: 30, density: 0.9 },
+            { distance: 40, density: 0.8 },
+            { distance: 50, density: 0.7 },
+            { distance: 60, density: 0.5 },
+            { distance: 70, density: 0.3 },
+            { distance: 80, density: 0.1 }
           ]
         };
-      default: // Qualité moyenne (par défaut)
+      default: // Qualité moyenne
         return {
           ...baseParams,
-          maxDensity: 600000,
+          maxDensity: 1200000, // Augmenté de 400k à 1.2M
           lodLevels: [
-            { distance: 0, density: 1.0 },    // Distance 0-10: densité 100%
-            { distance: 10, density: 1.0 },   // Distance 10: toujours 100%
-            { distance: 15, density: 0.9 },   // Distance 15: densité 90%
-            { distance: 20, density: 0.8 },   // Distance 20: densité 80%
-            { distance: 25, density: 0.7 },   // Distance 25: densité 70%
-            { distance: 30, density: 0.6 },   // Distance 30: densité 60%
-            { distance: 35, density: 0.5 },   // Distance 35: densité 50%
-            { distance: 40, density: 0.4 },   // Distance 40: densité 40%
-            { distance: 45, density: 0.3 },   // Distance 45: densité 30%
-            { distance: 50, density: 0.1 }    // Distance 50+: densité 10%
+            { distance: 0, density: 1.0 },
+            { distance: 15, density: 0 },
+            { distance: 25, density: 0.8 },
+            { distance: 35, density: 0.6 },
+            { distance: 45, density: 0.4 },
+            { distance: 55, density: 0.2 },
+            { distance: 65, density: 0.1 }
           ]
         };
     }
-  }, [qualityLevel, TERRAIN_CONFIG]);
+  }, [qualityLevel]);
   
   // Paramètres des buissons adaptés à la qualité
   const bushParams = useMemo(() => {
@@ -176,25 +288,12 @@ function SceneContent({ sunPosition, setSunPosition }) {
       height: TERRAIN_CONFIG.size
     };
     
-    // Ajuster le nombre de buissons selon la qualité
     switch (qualityLevel) {
-      case 0: // Basse qualité
-        return {
-          ...baseParams,
-          count: 150
-        };
-      case 2: // Haute qualité  
-        return {
-          ...baseParams,
-          count: 400
-        };
-      default: // Qualité moyenne
-        return {
-          ...baseParams,
-          count: 250
-        };
+      case 0: return { ...baseParams, count: 100 };
+      case 2: return { ...baseParams, count: 300 };
+      default: return { ...baseParams, count: 200 };
     }
-  }, [qualityLevel, TERRAIN_CONFIG]);
+  }, [qualityLevel]);
   
   // Paramètres des fleurs adaptés à la qualité
   const flowerParams = useMemo(() => {
@@ -206,73 +305,74 @@ function SceneContent({ sunPosition, setSunPosition }) {
       height: TERRAIN_CONFIG.size
     };
     
-    // Ajuster le nombre de fleurs selon la qualité
     switch (qualityLevel) {
-      case 0: // Basse qualité
-        return {
-          ...baseParams,
-          count: 80
-        };
-      case 2: // Haute qualité  
-        return {
-          ...baseParams,
-          count: 200
-        };
-      default: // Qualité moyenne
-        return {
-          ...baseParams,
-          count: 120
-        };
+      case 0: return { ...baseParams, count: 50 };
+      case 2: return { ...baseParams, count: 150 };
+      default: return { ...baseParams, count: 100 };
     }
-  }, [qualityLevel, TERRAIN_CONFIG]);
+  }, [qualityLevel]);
   
   // Paramètres de brouillard adaptés à la qualité
   const fogParams = useMemo(() => {
     switch (qualityLevel) {
-      case 0: // Basse qualité - brouillard plus proche pour masquer la distance
+      case 0:
         return { 
-          baseNear: 15, 
-          baseFar: 80, 
-          adaptationSpeed: 0.03, // Réduire la vitesse pour des transitions plus douces
+          baseNear: 12, 
+          baseFar: 60, 
+          adaptationSpeed: 0.05,
+          dynamicFog: false // Désactiver le brouillard dynamique en basse qualité
+        };
+      case 2:
+        return { 
+          baseNear: 35, 
+          baseFar: 120, 
+          adaptationSpeed: 0.015,
           dynamicFog: true 
         };
-      case 2: // Haute qualité - brouillard plus lointain
+      default:
         return { 
-          baseNear: 30, 
-          baseFar: 150, 
-          adaptationSpeed: 0.02, // Très lent pour une stabilité maximale
-          dynamicFog: true 
-        };
-      default: // Qualité moyenne
-        return { 
-          baseNear: 20, 
-          baseFar: 100, 
-          adaptationSpeed: 0.025, // Valeur intermédiaire
+          baseNear: 25, 
+          baseFar: 90, 
+          adaptationSpeed: 0.03,
           dynamicFog: true 
         };
     }
   }, [qualityLevel]);
 
+  // Monitoring de performance avec throttling
+  const monitorPerformance = useCallback((state, delta) => {
+    const now = performance.now();
+    if (now - lastPerformanceUpdate.current > 100) { // Mise à jour toutes les 100ms
+      performanceManager.updatePerformance(delta);
+      lastPerformanceUpdate.current = now;
+    }
+  }, []);
+
   return (
     <>
-      <PerformanceMonitor onIncline={handlePerformanceChange} onDecline={handlePerformanceChange} />
+      {/* Performance monitoring intégré */}
+      <PerformanceMonitor 
+        onIncline={monitorPerformance} 
+        onDecline={monitorPerformance}
+        factor={0.5} // Seuil plus permissif
+      />
       
-      {/* Ajouter la musique de fond ici, elle a besoin de l'audioListener */}
+      {/* Musique de fond */}
       {audioListener && <BackgroundMusic audioListener={audioListener} />}
       
-      {/* Sky and procedural clouds */}
+      {/* Sky optimisé */}
       <Sky
         sunPosition={[5, 12, -8]}
-        sunSize={1}
+        sunSize={qualityLevel === 0 ? 0.5 : 1}
         sunColor='#fff3a0'
-        ambientIntensity={0.65}
+        ambientIntensity={qualityLevel === 0 ? 0.5 : 0.65}
         preset='noon'
       />
       
-      {/* Ajouter le brouillard ici avec les paramètres adaptés */}
+      {/* Brouillard adaptatif */}
       <Fog color="#a0c1ea" {...fogParams} />
 
-      {/* Chemins - Rendu avant la végétation pour les optimisations */}
+      {/* Rendu conditionnel des éléments selon la qualité */}
       <Suspense fallback={null}>
         <Paths 
           paths={worldPaths} 
@@ -286,57 +386,73 @@ function SceneContent({ sunPosition, setSunPosition }) {
         <Grass {...grassParams} playerPositionRef={playerPositionRef} paths={worldPaths} />
       </Suspense>
 
-      <Suspense fallback={null}>
-        <Bushes {...bushParams} playerPositionRef={playerPositionRef} />
-      </Suspense>
+      {/* Rendu conditionnel de la végétation */}
+      {qualityLevel > 0 && (
+        <>
+          <Suspense fallback={null}>
+            <Bushes {...bushParams} playerPositionRef={playerPositionRef} />
+          </Suspense>
 
-      <Suspense fallback={null}>
-        <Flowers {...flowerParams} playerPositionRef={playerPositionRef} />
-      </Suspense>
+          <Suspense fallback={null}>
+            <Flowers {...flowerParams} playerPositionRef={playerPositionRef} />
+          </Suspense>
+        </>
+      )}
 
-      {/* Physics avec gravité configurée */}
+      {/* Physics avec paramètres adaptés */}
       <Physics 
         gravity={[0, -9.81, 0]} 
         debug={false}
-        interpolate={true}
+        interpolate={qualityLevel > 0}
         colliders={false}
+        paused={false}
+        timeStep={qualityLevel === 0 ? 1/30 : 1/60} // Réduire la fréquence physique en basse qualité
       >
-        {/* Terrain procédural */}
         <Ground 
           paths={worldPaths} 
           pathDetailTexture={TEXTURES.paths.sandstone.diffuse}
           baseTexture={TEXTURES.ground.rocky.diffuse}
         />
         
-        {/* Player local - Rendu dès que l'audioListener est prêt */}
+        {/* Player local */}
         {audioListener && (
           <Player 
-            key={playerKey} // Assurer une clé unique
+            key={playerKey}
             audioListener={audioListener}
-            // Passer la ref, le composant Player gérera si les buffers sont prêts
             stepSoundBuffers={stepSoundBuffers}
             playerPositionRef={playerPositionRef}
           />
         )}
         
-        {/* Joueurs distants - Rendu aussi dès que l'audioListener est prêt */}
-        {/* Assurer que 'players' existe avant de mapper */}
+        {/* Joueurs distants avec LOD */}
         {audioListener && players && Object.entries(players).map(([id, playerData]) => {
-            if (id === localPlayerId) return null;
-            // Vérifier si playerData et locomotion existent
-            const remoteLocomotion = playerData?.locomotion || 'idle'; 
-            return (
-              <RemotePlayer 
-                key={id} 
-                playerData={playerData} 
-                audioListener={audioListener}
-                // Passer la ref, le composant RemotePlayer gérera si les buffers sont prêts
-                stepSoundBuffers={stepSoundBuffers} 
-                locomotion={remoteLocomotion} // Passer la locomotion distante
-              />
+          if (id === localPlayerId) return null;
+          
+          // LOD pour les joueurs distants en basse qualité
+          if (qualityLevel === 0 && playerPositionRef.current) {
+            const distance = playerPositionRef.current.distanceTo(
+              new THREE.Vector3(
+                playerData.position?.x || 0,
+                playerData.position?.y || 0,
+                playerData.position?.z || 0
+              )
             );
-          })}
-        
+            
+            // Ne pas rendre les joueurs distants très éloignés en basse qualité
+            if (distance > 50) return null;
+          }
+          
+          const remoteLocomotion = playerData?.locomotion || 'idle'; 
+          return (
+            <RemotePlayer 
+              key={id} 
+              playerData={playerData} 
+              audioListener={audioListener}
+              stepSoundBuffers={stepSoundBuffers} 
+              locomotion={remoteLocomotion}
+            />
+          );
+        })}
       </Physics>
     </>
   );
@@ -347,21 +463,30 @@ export default function CustomCanvas({ sunPosition, setSunPosition, children }) 
     <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
       <Canvas
         camera={{ position: [0, 5, 10], fov: 50 }}
-        shadows={{ type: THREE.PCFSoftShadowMap }}
+        shadows={{ 
+          type: THREE.PCFSoftShadowMap,
+          autoUpdate: true
+        }}
         gl={{ 
           antialias: true,
           powerPreference: 'high-performance',
           precision: 'highp',
-          // Activer physicallyCorrectLights pour un meilleur rendu
-          physicallyCorrectLights: true
+          physicallyCorrectLights: true,
+          // Optimisations supplémentaires
+          stencil: false,
+          depth: true,
+          alpha: false,
+          preserveDrawingBuffer: false
+        }}
+        dpr={[1, 2]} // Limiter le device pixel ratio pour les performances
+        performance={{ 
+          min: 0.2, // Seuil minimum de performance
+          max: 1.0, // Seuil maximum
+          debounce: 200 // Délai avant ajustement
         }}
       >
-        {/* Rendre le composant interne qui a accès au contexte du Canvas */}
         <SceneContent sunPosition={sunPosition} setSunPosition={setSunPosition} />
-        
-        {/* Rendre les enfants ici (y compris <Stats />) */}
         {children} 
-
       </Canvas>
     </div>
   );

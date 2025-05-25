@@ -8,6 +8,7 @@ import usePlayerMovement from '../hooks/usePlayerMovement';
 import FollowCamera from './camera/FollowCamera';
 import { MODELS, ANIMATIONS, MODEL_DIRECTION_OFFSETS } from '../utils/const';
 import { MultiplayerContext } from './multiplayer/MultiplayerContext';
+import TerrainParticleManager from '../effects/TerrainParticleManager';
 // Variable statique pour suivre si un modèle a déjà été chargé
 const modelLoaded = { current: false };
 
@@ -108,8 +109,6 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
 
   return (
     <>
-  
-     
       <VrmAvatar 
         key={currentModel}
         vrmUrl={MODELS[currentModel]}
@@ -128,6 +127,17 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
         audioListener={audioListener}
         stepSoundBuffers={stepSoundBuffers}
       />    
+      
+      {/* Gestionnaire avancé d'effets de particules de terrain */}
+      {avatarObjectRef.current && (
+        <TerrainParticleManager
+          playerRef={avatarObjectRef}
+          locomotion={locomotion}
+          movementDirection={movementDirection}
+          terrainType="dirt"
+          enabled={true}
+        />
+      )}
       
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
       
