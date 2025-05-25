@@ -10,7 +10,7 @@ export function calculateHeight(x, z, frequency, amplitude) {
   return Math.sin(x * frequency) * Math.cos(z * frequency) * amplitude;
 }
 
-export default function Ground({ paths = [], pathDetailTexture = null }) {
+export default function Ground({ paths = [], pathDetailTexture = null, baseTexture = null }) {
   const groundSize = 100; // Increased size
   const amplitude = 1;    // Height of the hills
   const frequency = 0.1;  // How spread out the hills are
@@ -21,10 +21,19 @@ export default function Ground({ paths = [], pathDetailTexture = null }) {
   // Charger la texture de détail optionnelle pour les chemins
   const detailTexture = pathDetailTexture ? useTexture(pathDetailTexture) : null;
   
-  // Configurer la texture si elle existe
+  // Charger la texture de base optionnelle pour le sol
+  const groundTexture = baseTexture ? useTexture(baseTexture) : null;
+  
+  // Configurer la texture de détail si elle existe
   if (detailTexture) {
     detailTexture.wrapS = detailTexture.wrapT = THREE.RepeatWrapping;
     detailTexture.repeat.set(8, 8); // Répéter la texture pour plus de détail
+  }
+  
+  // Configurer la texture de base si elle existe
+  if (groundTexture) {
+    groundTexture.wrapS = groundTexture.wrapT = THREE.RepeatWrapping;
+    groundTexture.repeat.set(16, 16); // Répéter la texture de base plus pour plus de finesse
   }
   
   // Configuration des niveaux de détail pour le terrain avec des distances plus progressives
@@ -84,6 +93,11 @@ export default function Ground({ paths = [], pathDetailTexture = null }) {
         shader.uniforms.detailTexture = { value: detailTexture };
       }
       
+      // Ajouter la texture de base si elle existe
+      if (groundTexture) {
+        shader.uniforms.groundTexture = { value: groundTexture };
+      }
+      
       // Ajouter l'attribut personnalisé
       shader.vertexShader = shader.vertexShader.replace(
         '#include <common>',
@@ -91,7 +105,8 @@ export default function Ground({ paths = [], pathDetailTexture = null }) {
         attribute vec3 pathTransition;
         varying vec3 vPathTransition;
         varying vec3 vPosition;
-        varying vec2 vDetailUv;`
+        varying vec2 vDetailUv;
+        varying vec2 vGroundUv;`
       );
 
       shader.vertexShader = shader.vertexShader.replace(
@@ -100,7 +115,9 @@ export default function Ground({ paths = [], pathDetailTexture = null }) {
         vPathTransition = pathTransition;
         vPosition = position;
         // UV pour la texture de détail (répétée pour plus de finesse)
-        vDetailUv = uv * 8.0;`
+        vDetailUv = uv * 8.0;
+        // UV pour la texture de base du sol (répétée encore plus)
+        vGroundUv = uv * 16.0;`
       );
 
       // Modifier le fragment shader pour la transition de couleur
@@ -110,21 +127,33 @@ export default function Ground({ paths = [], pathDetailTexture = null }) {
         varying vec3 vPathTransition;
         varying vec3 vPosition;
         varying vec2 vDetailUv;
-        ${detailTexture ? 'uniform sampler2D detailTexture;' : ''}`
+        varying vec2 vGroundUv;
+        ${detailTexture ? 'uniform sampler2D detailTexture;' : ''}
+        ${groundTexture ? 'uniform sampler2D groundTexture;' : ''}`
       );
 
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <color_fragment>',
         `#include <color_fragment>
         
-        // Couleur de base du terrain (vert foncé)
-        vec3 grassColor = vec3(0.05, 0.12, 0.02); // Vert plus sombre et naturel
-        
-        // Couleur de transition près des chemins (terre/sable)
+        // Couleurs de base
+        vec3 grassColorBase = vec3(0.05, 0.12, 0.02); // Vert plus sombre et naturel
         vec3 dirtColor = vec3(0.4, 0.3, 0.2); // Couleur terre
         
         // Facteur de transition (0 = chemin, 1 = herbe)
         float transitionFactor = vPathTransition.r;
+        
+        ${groundTexture ? `
+        // Appliquer la texture de base au sol pour plus de détail
+        vec3 groundSample = texture2D(groundTexture, vGroundUv).rgb;
+        
+        // Mélanger la texture de base avec la couleur d'herbe pour plus de réalisme
+        // Augmenter l'intensité pour que la texture soit plus visible
+        vec3 grassColor = mix(grassColorBase, grassColorBase * groundSample * 1.8, 0.7);
+        ` : `
+        // Sans texture de base, utiliser la couleur unie
+        vec3 grassColor = grassColorBase;
+        `}
         
         ${detailTexture ? `
         // Appliquer la texture de détail sur les zones de chemin
@@ -135,10 +164,10 @@ export default function Ground({ paths = [], pathDetailTexture = null }) {
         float detailStrength = (1.0 - transitionFactor) * 0.6; // 0.6 = intensité de la texture
         vec3 texturedDirt = mix(dirtColor, dirtColor * detailSample * 1.5, detailStrength);
         
-        // Interpoler entre la terre texturée et l'herbe
+        // Interpoler entre la terre texturée et l'herbe texturée
         vec3 finalColor = mix(texturedDirt, grassColor, transitionFactor);
         ` : `
-        // Sans texture de détail, utiliser la couleur unie
+        // Sans texture de détail, interpoler entre terre et herbe
         vec3 finalColor = mix(dirtColor, grassColor, transitionFactor);
         `}
         
@@ -152,7 +181,7 @@ export default function Ground({ paths = [], pathDetailTexture = null }) {
     };
 
     return material;
-  }, [detailTexture]);
+  }, [detailTexture, groundTexture]);
   
   // Déplacements de la caméra - pour éviter les mises à jour trop fréquentes
   const lastCameraPosition = useRef(new THREE.Vector3());

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
 import { calculateHeight } from './Ground';
+import { TEXTURES } from '../../utils/const';
 
 export default function Bushes({
   count = 200,
@@ -18,7 +19,7 @@ export default function Bushes({
   const timeUniform = useMemo(() => ({ value: 0 }), []);
 
   // Charger la texture alpha pour le feuillage
-  const foliageAlpha = useTexture('https://douges.dev/static/foliage_alpha3.png');
+  const foliageAlpha = useTexture(TEXTURES.vegetation.foliage);
 
   useEffect(() => {
     if (foliageAlpha) {

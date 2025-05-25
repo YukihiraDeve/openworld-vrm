@@ -25,6 +25,34 @@ export const SOUNDS = {
   'grassStep': '/assets/sfx/grassStep',
 };
 
+export const TEXTURES = {
+  // Textures de terrain pour les chemins
+  paths: {
+    sandstone: {
+      diffuse: '/assets/textures/path/sandstone_cracks_diff_4k.jpg',
+      normal: '/assets/textures/path/sandstone_cracks_nor_gl_4k.exr',
+      roughness: '/assets/textures/path/sandstone_cracks_rough_4k.jpg',
+      displacement: '/assets/textures/path/sandstone_cracks_disp_4k.png'
+    }
+  },
+  
+  // Textures de base pour le sol
+  ground: {
+    rocky: {
+      diffuse: '/assets/textures/dirt/rocky_terrain_02_diff_4k.jpg',
+      normal: '/assets/textures/dirt/rocky_terrain_02_nor_gl_4k.exr',
+      roughness: '/assets/textures/dirt/rocky_terrain_02_rough_4k.exr',
+      displacement: '/assets/textures/dirt/rocky_terrain_02_disp_4k.png',
+      specular: '/assets/textures/dirt/rocky_terrain_02_spec_4k.png'
+    }
+  },
+  
+  // Autres textures (herbe, végétation, etc.)
+  vegetation: {
+    foliage: 'https://douges.dev/static/foliage_alpha3.png'
+  }
+};
+
 export const mixamoVRMRigMap = {
   mixamorigHips: 'hips',
   mixamorigSpine: 'spine',

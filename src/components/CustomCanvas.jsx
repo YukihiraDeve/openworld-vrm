@@ -14,7 +14,7 @@ import Flowers from './World/Flowers';
 import Paths, { createPaths } from './World/Paths';
 import Sky from './World/Sky';
 import Fog from './World/Fog';
-import { SOUNDS } from '../utils/const';
+import { SOUNDS, TEXTURES } from '../utils/const';
 import BackgroundMusic from './audio/BackgroundMusic';
 
 // Remettre les chemins des sons ici
@@ -304,7 +304,8 @@ function SceneContent({ sunPosition, setSunPosition }) {
         {/* Terrain procédural */}
         <Ground 
           paths={worldPaths} 
-          pathDetailTexture="/public/assets/textures/path/sandstone_cracks_diff_4k.jpg"
+          pathDetailTexture={TEXTURES.paths.sandstone.diffuse}
+          baseTexture={TEXTURES.ground.rocky.diffuse}
         />
         
         {/* Player local - Rendu dès que l'audioListener est prêt */}
