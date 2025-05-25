@@ -5,11 +5,13 @@ import { Stats, PerformanceMonitor } from '@react-three/drei';
 
 import { Physics } from '@react-three/rapier';
 import Ground from './World/Ground';
-import Environment from './World/Enviroment';
 import Player from '../experience/Player';
 import { MultiplayerContext } from '../experience/multiplayer/MultiplayerContext';
 import RemotePlayer from '../experience/multiplayer/RemotePlayer';
 import Grass from './World/Grass';
+import Bushes from './World/Bushes';
+import Flowers from './World/Flowers';
+import Paths, { createPaths } from './World/Paths';
 import Sky from './World/Sky';
 import Fog from './World/Fog';
 import { SOUNDS } from '../utils/const';
@@ -39,6 +41,9 @@ function SceneContent({ sunPosition, setSunPosition }) {
   
   // Ref pour la position du joueur (pour optimiser l'herbe)
   const playerPositionRef = useRef(new THREE.Vector3(0, 0, 0));
+  
+  // Créer les chemins une seule fois
+  const worldPaths = useMemo(() => createPaths(), []);
   
   // Logique audio déplacée ici
   const [audioListener, setAudioListener] = useState(null);
@@ -161,6 +166,66 @@ function SceneContent({ sunPosition, setSunPosition }) {
     }
   }, [qualityLevel, TERRAIN_CONFIG]);
   
+  // Paramètres des buissons adaptés à la qualité
+  const bushParams = useMemo(() => {
+    const baseParams = {
+      position: [0, 0, 0],
+      amplitude: TERRAIN_CONFIG.amplitude,
+      frequency: TERRAIN_CONFIG.frequency,
+      width: TERRAIN_CONFIG.size,
+      height: TERRAIN_CONFIG.size
+    };
+    
+    // Ajuster le nombre de buissons selon la qualité
+    switch (qualityLevel) {
+      case 0: // Basse qualité
+        return {
+          ...baseParams,
+          count: 150
+        };
+      case 2: // Haute qualité  
+        return {
+          ...baseParams,
+          count: 400
+        };
+      default: // Qualité moyenne
+        return {
+          ...baseParams,
+          count: 250
+        };
+    }
+  }, [qualityLevel, TERRAIN_CONFIG]);
+  
+  // Paramètres des fleurs adaptés à la qualité
+  const flowerParams = useMemo(() => {
+    const baseParams = {
+      position: [0, 0, 0],
+      amplitude: TERRAIN_CONFIG.amplitude,
+      frequency: TERRAIN_CONFIG.frequency,
+      width: TERRAIN_CONFIG.size,
+      height: TERRAIN_CONFIG.size
+    };
+    
+    // Ajuster le nombre de fleurs selon la qualité
+    switch (qualityLevel) {
+      case 0: // Basse qualité
+        return {
+          ...baseParams,
+          count: 80
+        };
+      case 2: // Haute qualité  
+        return {
+          ...baseParams,
+          count: 200
+        };
+      default: // Qualité moyenne
+        return {
+          ...baseParams,
+          count: 120
+        };
+    }
+  }, [qualityLevel, TERRAIN_CONFIG]);
+  
   // Paramètres de brouillard adaptés à la qualité
   const fogParams = useMemo(() => {
     switch (qualityLevel) {
@@ -207,8 +272,26 @@ function SceneContent({ sunPosition, setSunPosition }) {
       {/* Ajouter le brouillard ici avec les paramètres adaptés */}
       <Fog color="#a0c1ea" {...fogParams} />
 
+      {/* Chemins - Rendu avant la végétation pour les optimisations */}
       <Suspense fallback={null}>
-        <Grass {...grassParams} playerPositionRef={playerPositionRef} />
+        <Paths 
+          paths={worldPaths} 
+          position={[0, 0, 0]}
+          frequency={TERRAIN_CONFIG.frequency}
+          amplitude={TERRAIN_CONFIG.amplitude}
+        />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <Grass {...grassParams} playerPositionRef={playerPositionRef} paths={worldPaths} />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <Bushes {...bushParams} playerPositionRef={playerPositionRef} />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <Flowers {...flowerParams} playerPositionRef={playerPositionRef} />
       </Suspense>
 
       {/* Physics avec gravité configurée */}
@@ -218,11 +301,11 @@ function SceneContent({ sunPosition, setSunPosition }) {
         interpolate={true}
         colliders={false}
       >
-        {/* Terrain OBJ */}
-        <Environment />
-        
         {/* Terrain procédural */}
-        <Ground />
+        <Ground 
+          paths={worldPaths} 
+          pathDetailTexture="/public/assets/textures/path/sandstone_cracks_diff_4k.jpg"
+        />
         
         {/* Player local - Rendu dès que l'audioListener est prêt */}
         {audioListener && (

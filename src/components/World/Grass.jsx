@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
 import { calculateHeight } from './Ground';
+import { isPositionOnPath, getPathTransitionFactor } from './Paths';
 
 // Composant GrassGPT4 : herbe animée avec InstancedMesh pour meilleures performances
 export default function GrassGPT4({
@@ -13,6 +14,8 @@ export default function GrassGPT4({
   frequency = 0.1,
   amplitude = 1,
   playerPositionRef, // Ref vers la position du joueur
+  paths = [], // Nouveau prop pour les chemins
+  pathMargin = 0.3, // Marge autour des chemins où l'herbe ne pousse pas
   lodLevels = [
     { distance: 0, density: 1.0 },    // Distance 0-10: densité 100%
     { distance: 10, density: 1.0 },   // Distance 10: toujours 100%
@@ -268,18 +271,36 @@ export default function GrassGPT4({
     // Réinitialiser les données d'instance
     grassInstanceData.current = [];
     
-    for (let i = 0; i < grassCount; i++) {
+    let validInstanceCount = 0;
+    const maxAttempts = grassCount * 3; // Limite pour éviter une boucle infinie
+    let attempts = 0;
+    
+    while (validInstanceCount < grassCount && attempts < maxAttempts) {
       const x = (Math.random() - 0.5) * width;
       const z = (Math.random() - 0.5) * height;
+      
+      attempts++;
+      
+      // Calculer le facteur de transition pour cette position (0 = pas d'herbe, 1 = herbe complète)
+      const transitionFactor = paths.length > 0 ? getPathTransitionFactor(x, z, paths, 1.5) : 1;
+      
+      // Utiliser une probabilité basée sur le facteur de transition pour un fondu naturel
+      const shouldGenerateGrass = Math.random() < transitionFactor;
+      
+      // Si cette position ne devrait pas avoir d'herbe selon la probabilité, passer à la suivante
+      if (!shouldGenerateGrass) {
+        continue;
+      }
       
       // Calculer la hauteur du terrain à cette position
       const groundHeight = calculateHeight(x, z, frequency, amplitude);
       
       // Stocker les données de position pour le LOD
-      grassInstanceData.current[i] = {
+      grassInstanceData.current[validInstanceCount] = {
         worldPosition: new THREE.Vector3(x + position[0], groundHeight + position[1], z + position[2]),
         distanceToPlayer: 0,
-        visible: true
+        visible: true,
+        transitionFactor: transitionFactor // Stocker pour référence future
       };
       
       // Rotation aléatoire autour de l'axe Y
@@ -299,34 +320,48 @@ export default function GrassGPT4({
         Math.cos(tiltDirection) * tiltAngle  // Inclinaison Z
       );
       
-      // Échelle plus fine et variable pour chaque brin
+      // Échelle plus fine et variable pour chaque brin, influencée par la proximité du chemin
       const baseScale = 1.0 + Math.random() * 0.7; // Base plus fine
       const heightVariation = 0.7 + Math.random() * 0.6; // Plus de variation en hauteur
       
+      // Réduire légèrement la taille de l'herbe près des chemins pour un effet de foulage
+      const pathInfluence = Math.pow(transitionFactor, 0.5); // Effet plus doux
+      const scaleMultiplier = 0.6 + 0.4 * pathInfluence; // L'herbe est 60-100% de sa taille normale
+      
       dummyObj.scale.set(
-        baseScale, // Largeur
-        baseScale * heightVariation, // Hauteur plus variable
-        baseScale  // Profondeur
+        baseScale * scaleMultiplier, // Largeur influencée par proximité chemin
+        baseScale * heightVariation * scaleMultiplier, // Hauteur influencée par proximité chemin
+        baseScale * scaleMultiplier  // Profondeur influencée par proximité chemin
       );
       
       dummyObj.updateMatrix();
-      mesh.setMatrixAt(i, dummyObj.matrix);
+      mesh.setMatrixAt(validInstanceCount, dummyObj.matrix);
       
       // Stocker des valeurs vraiment aléatoires pour l'animation du vent
-      instanceRandoms[i * 3] = Math.random();     // Variation de vitesse
-      instanceRandoms[i * 3 + 1] = Math.random(); // Variation de phase
-      instanceRandoms[i * 3 + 2] = Math.random(); // Réserve pour d'autres usages
-      instanceHeights[i] = groundHeight;
+      instanceRandoms[validInstanceCount * 3] = Math.random();     // Variation de vitesse
+      instanceRandoms[validInstanceCount * 3 + 1] = Math.random(); // Variation de phase
+      instanceRandoms[validInstanceCount * 3 + 2] = Math.random(); // Réserve pour d'autres usages
+      instanceHeights[validInstanceCount] = groundHeight;
+      
+      validInstanceCount++;
+    }
+    
+    // Si nous n'avons pas pu générer assez d'instances, ajuster le compte
+    if (validInstanceCount < grassCount) {
+      console.log(`Généré ${validInstanceCount} brins d'herbe au lieu de ${grassCount} (chemins exclus)`);
+      // Réduire la taille des arrays aux instances valides
+      grassInstanceData.current = grassInstanceData.current.slice(0, validInstanceCount);
     }
     
     // Définir les attributs d'instance
     mesh.instanceMatrix.needsUpdate = true;
+    mesh.count = validInstanceCount; // Mettre à jour le nombre d'instances réelles
     
     // Optionnel: ajout d'attributs personnalisés pour l'animation
     mesh.geometry.setAttribute('instanceRandom', new THREE.InstancedBufferAttribute(instanceRandoms, 3));
     mesh.geometry.setAttribute('instanceHeight', new THREE.InstancedBufferAttribute(instanceHeights, 1));
     
-  }, [maxDensity, width, height, frequency, amplitude, position, dummyObj]);
+  }, [maxDensity, width, height, frequency, amplitude, position, dummyObj, paths, pathMargin]);
 
   // Mise à jour de l'uniforme time pour l'animation du vent et LOD basé sur le joueur
   useFrame(({ clock }) => {
