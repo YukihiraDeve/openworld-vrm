@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
-export default function useKeyboardController(cameraAngleRef, updateMovement) {
+export default function useKeyboardController(cameraAngleRef, updateMovement, onEmoteMenuToggle) {
   const keysPressed = useRef({
     KeyW: false, 
     KeyA: false, 
@@ -14,6 +14,13 @@ export default function useKeyboardController(cameraAngleRef, updateMovement) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.repeat) return;
+      
+      // Gestion de la touche B pour ouvrir le menu d'émotes
+      if (event.code === 'KeyB' && onEmoteMenuToggle) {
+        onEmoteMenuToggle();
+        return;
+      }
+      
       if (event.code in keysPressed.current) {
         keysPressed.current[event.code] = true;
         updateMovement();
@@ -34,7 +41,7 @@ export default function useKeyboardController(cameraAngleRef, updateMovement) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [updateMovement]);
+  }, [updateMovement, onEmoteMenuToggle]);
 
   return keysPressed;
 }

@@ -64,6 +64,14 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
     }
   }, [socket]);
 
+  // Fonction pour émettre une émote
+  const emitPlayerEmote = useCallback((emoteData) => {
+    if (socket?.connected && emoteData) {
+      console.log("Emitting emote:", emoteData); // Debug
+      socket.emit('playerEmote', emoteData);
+    }
+  }, [socket]);
+
   const contextValue = {
     socket,
     players,
@@ -71,6 +79,7 @@ export default function MultiplayerProvider({ children, initialConnectionDelay =
     localPlayerModel, // Ajouter le modèle local au contexte
     emitPlayerMove,
     emitPlayerAnimation,
+    emitPlayerEmote,
   };
 
   return (

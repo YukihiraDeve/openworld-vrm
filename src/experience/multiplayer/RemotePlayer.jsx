@@ -20,6 +20,10 @@ export default function RemotePlayer({ playerData, audioListener, stepSoundBuffe
   // Obtenir le décalage d'orientation pour le modèle du joueur distant
   const modelDirectionOffset = MODEL_DIRECTION_OFFSETS[playerModel] || 0;
 
+  // Obtenir l'émote actuelle du joueur distant
+  const currentEmote = playerData.currentEmote || null;
+  const currentEmoteType = playerData.currentEmoteType || null;
+
 
   return (
     <VrmAvatar
@@ -37,6 +41,10 @@ export default function RemotePlayer({ playerData, audioListener, stepSoundBuffe
       audioListener={audioListener}
       stepSoundBuffers={stepSoundBuffers}
       capsuleCollider={false}
+      currentEmote={currentEmote}
+      currentEmoteType={currentEmoteType}
+      emoteAnimationUrl={currentEmoteType === 'animation' && currentEmote ? ANIMATIONS[currentEmote] : null}
+      emoteExpression={currentEmoteType === 'expression' ? currentEmote : null}
     />
   );
 }

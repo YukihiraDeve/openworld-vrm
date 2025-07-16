@@ -8,7 +8,7 @@ import usePlayerMovement from '../hooks/usePlayerMovement';
 import FollowCamera from './camera/FollowCamera';
 import { MODELS, ANIMATIONS, MODEL_DIRECTION_OFFSETS } from '../utils/const';
 import { MultiplayerContext } from './multiplayer/MultiplayerContext';
-import TerrainParticleManager from '../effects/TerrainParticleManager';
+import { useEmoteContext } from '../context/EmoteContext';
 // Variable statique pour suivre si un modèle a déjà été chargé
 const modelLoaded = { current: false };
 
@@ -31,6 +31,13 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
     localPlayerModel 
   } = useContext(MultiplayerContext);
 
+  // Système d'émotes
+  const {
+    currentEmote,
+    currentEmoteType,
+    toggleEmoteMenu
+  } = useEmoteContext();
+
   const {
     locomotion,
     movementDirection,
@@ -41,7 +48,7 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
     updateCameraAngleRef
   } = usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarObjectRef);
 
-  const keysPressed = useKeyboardController(cameraAngleRef, () => updateMovement(keysPressed));
+  const keysPressed = useKeyboardController(cameraAngleRef, () => updateMovement(keysPressed), toggleEmoteMenu);
   useMouseController(setCameraAngle);
 
   useEffect(() => {
@@ -126,21 +133,13 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
         position={[0, 2, 0]}
         audioListener={audioListener}
         stepSoundBuffers={stepSoundBuffers}
+        currentEmote={currentEmote}
+        currentEmoteType={currentEmoteType}
+        emoteAnimationUrl={currentEmoteType === 'animation' && currentEmote ? ANIMATIONS[currentEmote] : null}
+        emoteExpression={currentEmoteType === 'expression' ? currentEmote : null}
       />    
       
-      {/* Gestionnaire avancé d'effets de particules de terrain */}
-      {avatarObjectRef.current && (
-        <TerrainParticleManager
-          playerRef={avatarObjectRef}
-          locomotion={locomotion}
-          movementDirection={movementDirection}
-          terrainType="dirt"
-          enabled={true}
-        />
-      )}
-      
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
-      
     </>
   );
 }

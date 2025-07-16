@@ -16,6 +16,8 @@ import Sky from './World/Sky';
 import Fog from './World/Fog';
 import { SOUNDS, TEXTURES } from '../utils/const';
 import BackgroundMusic from './audio/BackgroundMusic';
+import { EmoteProvider, useEmoteContext } from '../context/EmoteContext';
+import EmoteMenu from '../ui/EmoteMenu/EmoteMenu';
 
 // Remettre les chemins des sons ici
 const stepSoundPaths = [
@@ -133,6 +135,39 @@ class PerformanceManager {
 
 // Instance globale du gestionnaire de performance
 const performanceManager = new PerformanceManager();
+
+// Composant pour gérer le menu d'émotes en dehors du Canvas
+function EmoteMenuManager() {
+  const { 
+    currentEmote, 
+    isEmoteMenuOpen, 
+    closeEmoteMenu, 
+    triggerEmote 
+  } = useEmoteContext();
+  
+  const { emitPlayerEmote } = useContext(MultiplayerContext);
+
+  const handleEmoteSelect = useCallback((emote) => {
+    const animationName = triggerEmote(emote);
+    console.log(`Émote sélectionnée: ${emote.name} (${animationName}) - Type: ${emote.type}`);
+    
+    // Émettre l'émote aux autres joueurs via le multijoueur
+    emitPlayerEmote({ 
+      emote: emote.id, 
+      type: emote.type,
+      animation: animationName 
+    });
+  }, [triggerEmote, emitPlayerEmote]);
+
+  return (
+    <EmoteMenu
+      isOpen={isEmoteMenuOpen}
+      onClose={closeEmoteMenu}
+      onEmoteSelect={handleEmoteSelect}
+      currentEmote={currentEmote}
+    />
+  );
+}
 
 // Composant interne pour gérer l'audio et le rendu
 function SceneContent({ sunPosition, setSunPosition }) {
@@ -460,34 +495,39 @@ function SceneContent({ sunPosition, setSunPosition }) {
 
 export default function CustomCanvas({ sunPosition, setSunPosition, children }) {
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
-      <Canvas
-        camera={{ position: [0, 5, 10], fov: 50 }}
-        shadows={{ 
-          type: THREE.PCFSoftShadowMap,
-          autoUpdate: true
-        }}
-        gl={{ 
-          antialias: true,
-          powerPreference: 'high-performance',
-          precision: 'highp',
-          physicallyCorrectLights: true,
-          // Optimisations supplémentaires
-          stencil: false,
-          depth: true,
-          alpha: false,
-          preserveDrawingBuffer: false
-        }}
-        dpr={[1, 2]} // Limiter le device pixel ratio pour les performances
-        performance={{ 
-          min: 0.2, // Seuil minimum de performance
-          max: 1.0, // Seuil maximum
-          debounce: 200 // Délai avant ajustement
-        }}
-      >
-        <SceneContent sunPosition={sunPosition} setSunPosition={setSunPosition} />
-        {children} 
-      </Canvas>
-    </div>
+    <EmoteProvider>
+      <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
+        <Canvas
+          camera={{ position: [0, 5, 10], fov: 50 }}
+          shadows={{ 
+            type: THREE.PCFSoftShadowMap,
+            autoUpdate: true
+          }}
+          gl={{ 
+            antialias: true,
+            powerPreference: 'high-performance',
+            precision: 'highp',
+            physicallyCorrectLights: true,
+            // Optimisations supplémentaires
+            stencil: false,
+            depth: true,
+            alpha: false,
+            preserveDrawingBuffer: false
+          }}
+          dpr={[1, 2]} // Limiter le device pixel ratio pour les performances
+          performance={{ 
+            min: 0.2, // Seuil minimum de performance
+            max: 1.0, // Seuil maximum
+            debounce: 200 // Délai avant ajustement
+          }}
+        >
+          <SceneContent sunPosition={sunPosition} setSunPosition={setSunPosition} />
+          {children} 
+        </Canvas>
+        
+        {/* Menu d'émotes rendu en dehors du Canvas */}
+        <EmoteMenuManager />
+      </div>
+    </EmoteProvider>
   );
 }

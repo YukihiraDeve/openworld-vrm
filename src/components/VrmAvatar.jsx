@@ -7,6 +7,8 @@ import * as THREE from 'three';
 import { mixamoVRMRigMap } from '../utils/const'; 
 import { RigidBody, CapsuleCollider } from '@react-three/rapier';
 import FootstepAudio from './audio/FootstepAudio';
+import useEyeBlink from '../hooks/useEyeBlink';
+import useVRMExpressions from '../hooks/useVRMExpressions';
 
 // Cache global pour les modèles déjà chargés
 const loadedModels = new Map();
@@ -97,6 +99,10 @@ export default function VrmAvatar({
   capsuleCollider = false, // true pour le joueur local, false pour les distants
   audioListener, 
   stepSoundBuffers,
+  currentEmote = null, // Émote en cours
+  currentEmoteType = null, // Type d'émote ('animation' ou 'expression')
+  emoteAnimationUrl = null, // URL de l'animation d'émote
+  emoteExpression = null, // Expression faciale à afficher
 }) {
   const groupRef = useRef(); // Référence au groupe contenant le modèle visuel
   const vrmRef = useRef(); // Référence à l'instance VRM chargée
@@ -105,7 +111,7 @@ export default function VrmAvatar({
   const actionsRef = useRef({}); 
   const currentActionRef = useRef(null); 
   const [modelLoaded, setModelLoaded] = useState(false); // Pour le callback onLoad
-
+  
   // Ref pour stocker les dernières valeurs de props pour useFrame
   const latestPropsRef = useRef({ position, rotation });
 
@@ -114,10 +120,16 @@ export default function VrmAvatar({
     latestPropsRef.current = { position, rotation };
   }, [position, rotation]);
 
+  // Système de clignement d'yeux automatique toutes les 5 secondes
+  const { triggerEyeBlink, isBlinking } = useEyeBlink(vrmRef, 5000, 150, 2000);
+  
+  // Système d'expressions faciales VRM
+  const { triggerExpression, getCurrentExpression, stopExpression } = useVRMExpressions(vrmRef);
+
   // Fonction pour charger les animations
   const loadAnimations = async (loadedVrmInstance, animMixer) => {
     try {
-      // Charger les trois animations
+      // Charger les trois animations de base
       const idleClip = await loadMixamoAnimation(idleAnimationUrl, loadedVrmInstance, 'idle');
       const walkClip = await loadMixamoAnimation(walkAnimationUrl, loadedVrmInstance, 'walk');
       const runClip = await loadMixamoAnimation(runAnimationUrl, loadedVrmInstance, 'run');
@@ -145,6 +157,20 @@ export default function VrmAvatar({
         actionsRef.current.run.play();
       } else {
         console.error('Le clip Run na pas pu être chargé ou converti.');
+      }
+
+      // Charger l'animation d'émote si fournie
+      if (emoteAnimationUrl) {
+        const emoteClip = await loadMixamoAnimation(emoteAnimationUrl, loadedVrmInstance, 'emote');
+        if (emoteClip) {
+          actionsRef.current.emote = animMixer.clipAction(emoteClip);
+          actionsRef.current.emote.weight = 0;
+          actionsRef.current.emote.setLoop(THREE.LoopOnce); // Les émotes ne bouclent pas
+          actionsRef.current.emote.clampWhenFinished = true; // Garder la dernière frame
+          actionsRef.current.emote.play();
+        } else {
+          console.error('Le clip Emote na pas pu être chargé ou converti.');
+        }
       }
 
       // Initialiser l'action courante si idle existe
@@ -262,6 +288,49 @@ export default function VrmAvatar({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vrmUrl, onLoad, capsuleCollider]); // Dépendances correctes
 
+  // Effet pour charger/recharger l'animation d'émote
+  useEffect(() => {
+    if (!mixer || !vrmRef.current || !emoteAnimationUrl) return;
+
+    const loadEmoteAnimation = async () => {
+      try {
+        // Supprimer l'ancienne animation d'émote si elle existe
+        if (actionsRef.current.emote) {
+          actionsRef.current.emote.stop();
+          mixer.uncacheAction(actionsRef.current.emote.getClip());
+          delete actionsRef.current.emote;
+        }
+
+        // Charger la nouvelle animation d'émote
+        const emoteClip = await loadMixamoAnimation(emoteAnimationUrl, vrmRef.current, 'emote');
+        if (emoteClip) {
+          actionsRef.current.emote = mixer.clipAction(emoteClip);
+          actionsRef.current.emote.weight = 0;
+          actionsRef.current.emote.setLoop(THREE.LoopOnce);
+          actionsRef.current.emote.clampWhenFinished = true;
+          actionsRef.current.emote.play();
+        }
+      } catch (error) {
+        console.error("Erreur lors du chargement de l'animation d'émote:", error);
+      }
+    };
+
+    loadEmoteAnimation();
+  }, [emoteAnimationUrl, mixer]);
+
+  // Effet pour gérer les expressions faciales
+  useEffect(() => {
+    if (!vrmRef.current) return;
+
+    if (emoteExpression && currentEmoteType === 'expression') {
+      // Déclencher l'expression faciale
+      triggerExpression(emoteExpression, 1.0, 3000);
+    } else if (!emoteExpression && currentEmoteType !== 'animation') {
+      // Arrêter l'expression si pas d'émote d'expression active
+      stopExpression();
+    }
+  }, [emoteExpression, currentEmoteType, triggerExpression, stopExpression]);
+
   // useFrame pour mettre à jour le mixer ET jouer les sons des joueurs distants
   useFrame((state, delta) => {
     if (mixer) {
@@ -318,21 +387,58 @@ export default function VrmAvatar({
     }
 
     // 4. Gérer les transitions d'animation (commun au local et distant)
-     if (mixer && actionsRef.current && locomotion) { // Assurez-vous que locomotion existe
-        const targetActionObject = actionsRef.current[locomotion];
-        const previousActionObject = currentActionRef.current;
+     if (mixer && actionsRef.current) {
+        // Priorité aux émotes d'animation : si une émote d'animation est active, elle prend la priorité
+        if (currentEmote && currentEmoteType === 'animation' && actionsRef.current.emote) {
+          const emoteAction = actionsRef.current.emote;
+          const previousAction = currentActionRef.current;
 
-        if (targetActionObject && targetActionObject !== previousActionObject) {
-            if (previousActionObject) {
-                 targetActionObject.reset().setEffectiveWeight(1).fadeIn(0.3).play();
-                 previousActionObject.fadeOut(0.3);
+          // Si l'émote n'est pas encore l'action courante, faire la transition
+          if (emoteAction !== previousAction) {
+            if (previousAction) {
+              emoteAction.reset().setEffectiveWeight(1).fadeIn(0.2).play();
+              previousAction.fadeOut(0.2);
             } else {
-                 targetActionObject.reset().setEffectiveWeight(1).play();
+              emoteAction.reset().setEffectiveWeight(1).play();
+            }
+            currentActionRef.current = emoteAction;
+          }
+        } 
+        // Si émote d'expression active, utiliser la locomotion normale mais garder l'expression
+        else if (currentEmote && currentEmoteType === 'expression' && locomotion) {
+          const targetActionObject = actionsRef.current[locomotion];
+          const previousActionObject = currentActionRef.current;
+
+          if (targetActionObject && targetActionObject !== previousActionObject) {
+            if (previousActionObject) {
+              targetActionObject.reset().setEffectiveWeight(1).fadeIn(0.3).play();
+              previousActionObject.fadeOut(0.3);
+            } else {
+              targetActionObject.reset().setEffectiveWeight(1).play();
             }
             currentActionRef.current = targetActionObject;
-        } else if (!previousActionObject && targetActionObject) {
-             targetActionObject.reset().setEffectiveWeight(1).play();
+          } else if (!previousActionObject && targetActionObject) {
+            targetActionObject.reset().setEffectiveWeight(1).play();
             currentActionRef.current = targetActionObject;
+          }
+        }
+        // Si pas d'émote active, utiliser la locomotion normale
+        else if (locomotion) {
+          const targetActionObject = actionsRef.current[locomotion];
+          const previousActionObject = currentActionRef.current;
+
+          if (targetActionObject && targetActionObject !== previousActionObject) {
+            if (previousActionObject) {
+              targetActionObject.reset().setEffectiveWeight(1).fadeIn(0.3).play();
+              previousActionObject.fadeOut(0.3);
+            } else {
+              targetActionObject.reset().setEffectiveWeight(1).play();
+            }
+            currentActionRef.current = targetActionObject;
+          } else if (!previousActionObject && targetActionObject) {
+            targetActionObject.reset().setEffectiveWeight(1).play();
+            currentActionRef.current = targetActionObject;
+          }
         }
      }
 

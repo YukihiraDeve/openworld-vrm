@@ -1,0 +1,169 @@
+.emote-menu {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  border-radius: 15px;
+  padding: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+  min-width: 320px;
+  max-width: 90vw;
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.emote-menu-header {
+  text-align: center;
+  margin-bottom: 15px;
+}
+
+.emote-menu-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: bold;
+  margin: 0;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.emote-menu-subtitle {
+  color: #ccc;
+  font-size: 12px;
+  margin: 5px 0 0 0;
+  opacity: 0.8;
+}
+
+.emote-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  max-width: 400px;
+  gap: 10px;
+  margin-bottom: 15px;
+  margin: 0 auto 15px auto;
+}
+
+.emote-item {
+  background: linear-gradient(135deg, #333, #555);
+  border: 2px solid #666;
+  border-radius: 10px;
+  padding: 15px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.emote-item:hover {
+  border-color: #00bfff;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 191, 255, 0.3);
+}
+
+.emote-item:active {
+  transform: translateY(0);
+}
+
+.emote-item-icon {
+  font-size: 24px;
+  margin-bottom: 5px;
+  display: block;
+}
+
+.emote-item-name {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  margin: 0;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.emote-item-key {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: bold;
+}
+
+.emote-menu-footer {
+  text-align: center;
+  border-top: 1px solid #444;
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.emote-menu-close {
+  color: #ccc;
+  font-size: 11px;
+  opacity: 0.8;
+  margin: 0;
+}
+
+.emote-menu-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 999;
+  backdrop-filter: blur(2px);
+}
+
+/* Animation pour les émotes actives */
+.emote-item.active {
+  border-color: #ff6b35;
+  background: linear-gradient(135deg, #ff6b35, #f7931e);
+  animation: pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    box-shadow: 0 0 10px rgba(255, 107, 53, 0.5);
+  }
+  to {
+    box-shadow: 0 0 20px rgba(255, 107, 53, 0.8);
+  }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .emote-menu {
+    min-width: 90vw;
+    padding: 15px;
+  }
+  
+  .emote-grid {
+    grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+    gap: 8px;
+  }
+  
+  .emote-item {
+    padding: 10px;
+  }
+  
+  .emote-item-icon {
+    font-size: 20px;
+  }
+  
+  .emote-item-name {
+    font-size: 11px;
+  }
+} 
