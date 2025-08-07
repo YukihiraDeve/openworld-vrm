@@ -11,6 +11,7 @@ import RemotePlayer from '../experience/multiplayer/RemotePlayer';
 import Grass from './World/Grass';
 import Bushes from './World/Bushes';
 import Flowers from './World/Flowers';
+import Trees from './World/Trees';
 import Paths, { createPaths } from './World/Paths';
 import Sky from './World/Sky';
 import Fog from './World/Fog';
@@ -431,6 +432,18 @@ function SceneContent({ sunPosition, setSunPosition }) {
           <Suspense fallback={null}>
             <Flowers {...flowerParams} playerPositionRef={playerPositionRef} />
           </Suspense>
+
+          <Suspense fallback={null}>
+            <Trees 
+              count={qualityLevel === 2 ? 700 : qualityLevel === 0 ? 300 : 500}
+              width={TERRAIN_CONFIG.size}
+              height={TERRAIN_CONFIG.size}
+              position={[0, 0, 0]}
+              frequency={TERRAIN_CONFIG.frequency}
+              amplitude={TERRAIN_CONFIG.amplitude}
+              paths={worldPaths}
+            />
+          </Suspense>
         </>
       )}
 
@@ -456,6 +469,7 @@ function SceneContent({ sunPosition, setSunPosition }) {
             audioListener={audioListener}
             stepSoundBuffers={stepSoundBuffers}
             playerPositionRef={playerPositionRef}
+                paths={worldPaths}
           />
         )}
         

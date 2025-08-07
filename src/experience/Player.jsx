@@ -15,7 +15,7 @@ const modelLoaded = { current: false };
 // Chemins vers les sons de pas
 // const stepSoundPaths = [...];
 
-export default function Player({ audioListener, stepSoundBuffers, playerPositionRef }) {
+export default function Player({ audioListener, stepSoundBuffers, playerPositionRef, paths }) {
   // const { camera } = useThree();
   // const [audioListener, setAudioListener] = useState(null);
   // const [stepSounds, setStepSounds] = useState([]);
@@ -137,6 +137,7 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
         currentEmoteType={currentEmoteType}
         emoteAnimationUrl={currentEmoteType === 'animation' && currentEmote ? ANIMATIONS[currentEmote] : null}
         emoteExpression={currentEmoteType === 'expression' ? currentEmote : null}
+        paths={paths}
       />    
       
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}

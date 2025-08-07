@@ -1,9 +1,8 @@
 import { useRef, useMemo, useEffect } from 'react';
 import * as THREE from 'three';
-import { useFrame } from '@react-three/fiber';
 import { useTexture } from '@react-three/drei';
+import { useFrame } from '@react-three/fiber';
 import { calculateHeight } from './Ground';
-import { TEXTURES } from '../../utils/const';
 
 export default function Bushes({
   count = 200,
@@ -18,16 +17,17 @@ export default function Bushes({
   const dummyObj = useMemo(() => new THREE.Object3D(), []);
   const timeUniform = useMemo(() => ({ value: 0 }), []);
 
-  // Charger la texture alpha pour le feuillage
-  const foliageAlpha = useTexture(TEXTURES.vegetation.foliage);
-
+  // Texture de feuilles pour buissons
+  const leavesTex = useTexture('/assets/textures/leaves/leaves.png');
   useEffect(() => {
-    if (foliageAlpha) {
-      foliageAlpha.wrapS = foliageAlpha.wrapT = THREE.RepeatWrapping;
-      foliageAlpha.minFilter = THREE.LinearMipMapLinearFilter;
-      foliageAlpha.magFilter = THREE.LinearFilter;
+    if (leavesTex) {
+      leavesTex.wrapS = leavesTex.wrapT = THREE.RepeatWrapping;
+      leavesTex.minFilter = THREE.LinearMipMapLinearFilter;
+      leavesTex.magFilter = THREE.LinearFilter;
+      leavesTex.anisotropy = 16;
+      leavesTex.repeat.set(2, 2); // densifier le motif
     }
-  }, [foliageAlpha]);
+  }, [leavesTex]);
 
   // Création de géométries de feuillage avec des plans croisés
   const bushGeometries = useMemo(() => {
@@ -193,8 +193,6 @@ export default function Bushes({
 
   // Matériaux avec la texture alpha et couleurs harmonisées avec l'herbe
   const bushMaterials = useMemo(() => {
-    if (!foliageAlpha) return [];
-    
     const materials = [];
     
     // Palette de couleurs plus claires harmonisées avec l'herbe
@@ -212,43 +210,33 @@ export default function Bushes({
     colors.forEach(color => {
       const material = new THREE.MeshStandardMaterial({
         color: color,
-        alphaMap: foliageAlpha,
-        transparent: true,
-        alphaTest: 0.1,
+        map: leavesTex || null,
+        alphaMap: leavesTex || null,
+        transparent: false,
+        alphaTest: 0.4,
         side: THREE.DoubleSide,
-        roughness: 0.7, // Légèrement moins rugueux pour plus de brillance
-        metalness: 0.05, // Réduit pour un aspect plus naturel
+        roughness: 0.7,
+        metalness: 0.05,
         shadowSide: THREE.DoubleSide
       });
 
-      // Animation au vent pour les feuillages
       material.onBeforeCompile = (shader) => {
-        shader.vertexShader = 'uniform float time;\n' + shader.vertexShader;
         shader.uniforms.time = timeUniform;
-        
-        shader.vertexShader = shader.vertexShader.replace(
-          '#include <common>',
-          `#include <common>
-          attribute vec3 instanceRandom;`
-        );
-        
+        shader.vertexShader = `
+          uniform float time;
+          attribute vec3 instanceRandom;
+        ` + shader.vertexShader;
+
         shader.vertexShader = shader.vertexShader.replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-          vec3 worldPos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
-          
-          // Animation plus réaliste pour les feuillages
-          float windTime = time * 0.8 + instanceRandom.x * 6.28;
-          float windStrength = sin(windTime + worldPos.x * 0.05 + worldPos.z * 0.05) * 0.02;
-          float windStrength2 = sin(windTime * 1.3 + worldPos.x * 0.03) * 0.015;
-          
-          // Plus de mouvement en hauteur (feuilles)
-          float heightFactor = max(0.0, position.y + 0.5) * 0.8;
-          float sideFactor = abs(position.x) + abs(position.z);
-          
-          transformed.x += (windStrength + windStrength2) * heightFactor * (1.0 + sideFactor);
-          transformed.z += windStrength * 0.7 * heightFactor * (1.0 + sideFactor);
-          transformed.y += windStrength * 0.3 * heightFactor;`
+           float t = time * (0.7 + instanceRandom.x * 0.6);
+           float sway = sin(t + position.y * 1.4 + instanceRandom.y * 6.2831) * 0.06;
+           float sway2 = sin(t * 1.9 + instanceRandom.z * 8.0) * 0.03;
+           float h = max(0.0, position.y + 0.5);
+           float s = (abs(position.x) + abs(position.z));
+           transformed.x += (sway + sway2) * (0.6 + s) * h;
+           transformed.z += sway * 0.5 * (0.6 + s) * h;`
         );
       };
 
@@ -256,21 +244,21 @@ export default function Bushes({
     });
     
     return materials;
-  }, [timeUniform, foliageAlpha]);
+  }, [timeUniform]);
 
   // Initialisation des instances
   useEffect(() => {
-    if (!foliageAlpha || bushMaterials.length === 0) return;
+    if (bushMaterials.length === 0) return;
     
     instancedMeshRefs.current = [];
     
     // Répartir les buissons entre les différents types
     const countsPerType = [
-      Math.floor(count * 0.3), // 30% buissons moyens
-      Math.floor(count * 0.25), // 25% petites touffes
-      Math.floor(count * 0.2),  // 20% buissons denses
-      Math.floor(count * 0.15), // 15% petits détaillés
-      Math.floor(count * 0.1)   // 10% grands buissons
+      Math.floor(count * 0.3 * 4), // x4 densité
+      Math.floor(count * 0.25 * 4),
+      Math.floor(count * 0.2 * 4),
+      Math.floor(count * 0.15 * 4),
+      Math.floor(count * 0.1 * 4)
     ];
     
     bushGeometries.forEach((geometry, typeIndex) => {
@@ -345,7 +333,7 @@ export default function Bushes({
       
       instancedMeshRefs.current.push(instancedMesh);
     });
-  }, [count, width, height, frequency, amplitude, position, dummyObj, bushGeometries, bushMaterials, foliageAlpha]);
+  }, [count, width, height, frequency, amplitude, position, dummyObj, bushGeometries, bushMaterials]);
 
   // Animation
   useFrame(({ clock }) => {

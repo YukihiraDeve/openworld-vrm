@@ -9,6 +9,7 @@ import { RigidBody, CapsuleCollider } from '@react-three/rapier';
 import FootstepAudio from './audio/FootstepAudio';
 import useEyeBlink from '../hooks/useEyeBlink';
 import useVRMExpressions from '../hooks/useVRMExpressions';
+import DirtRunParticles from './particles/DirtRunParticles';
 
 // Cache global pour les modèles déjà chargés
 const loadedModels = new Map();
@@ -103,6 +104,7 @@ export default function VrmAvatar({
   currentEmoteType = null, // Type d'émote ('animation' ou 'expression')
   emoteAnimationUrl = null, // URL de l'animation d'émote
   emoteExpression = null, // Expression faciale à afficher
+  paths = null,
 }) {
   const groupRef = useRef(); // Référence au groupe contenant le modèle visuel
   const vrmRef = useRef(); // Référence à l'instance VRM chargée
@@ -512,6 +514,15 @@ export default function VrmAvatar({
               stepSoundBuffers={stepSoundBuffers}
               targetRef={groupRef} // Le groupe visuel contient les sons
               locomotion={locomotion}
+            />
+          )}
+          {/* Particules de terre en course sur les chemins (joueur local uniquement) */}
+          {capsuleCollider && paths && (
+            <DirtRunParticles
+              targetRef={groupRef}
+              locomotion={locomotion}
+              movementDirection={movementDirection}
+              paths={paths}
             />
           )}
         </group>
