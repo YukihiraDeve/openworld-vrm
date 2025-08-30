@@ -4,6 +4,21 @@ import { useTexture } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { calculateHeight } from './Ground';
 
+// Helper: gradient map for toon bands
+function createToonGradientTexture(steps = 4) {
+  const width = steps;
+  const data = new Uint8Array(width * 4);
+  for (let i = 0; i < width; i++) {
+    const v = Math.round((i / (width - 1)) * 255);
+    const o = i * 4;
+    data[o] = v; data[o + 1] = v; data[o + 2] = v; data[o + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(data, width, 1, THREE.RGBAFormat);
+  tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping; tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true; return tex;
+}
+
 export default function Bushes({
   count = 200,
   width = 50,
@@ -28,6 +43,9 @@ export default function Bushes({
       leavesTex.repeat.set(2, 2); // densifier le motif
     }
   }, [leavesTex]);
+
+  // Gradient toon partagé
+  const gradientMap = useMemo(() => createToonGradientTexture(4), []);
 
   // Création de géométries de feuillage avec des plans croisés
   const bushGeometries = useMemo(() => {
@@ -208,16 +226,15 @@ export default function Bushes({
     ];
     
     colors.forEach(color => {
-      const material = new THREE.MeshStandardMaterial({
+      const material = new THREE.MeshToonMaterial({
         color: color,
         map: leavesTex || null,
         alphaMap: leavesTex || null,
         transparent: false,
         alphaTest: 0.4,
         side: THREE.DoubleSide,
-        roughness: 0.7,
-        metalness: 0.05,
-        shadowSide: THREE.DoubleSide
+        dithering: true,
+        gradientMap,
       });
 
       material.onBeforeCompile = (shader) => {
@@ -244,7 +261,7 @@ export default function Bushes({
     });
     
     return materials;
-  }, [timeUniform]);
+  }, [timeUniform, leavesTex, gradientMap]);
 
   // Initialisation des instances
   useEffect(() => {

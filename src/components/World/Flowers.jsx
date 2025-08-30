@@ -3,6 +3,27 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { calculateHeight } from './Ground';
 
+// Helper: gradient map for toon bands (Ghibli-like shading)
+function createToonGradientTexture(steps = 4) {
+  const width = steps;
+  const data = new Uint8Array(width * 4);
+  for (let i = 0; i < width; i++) {
+    const v = Math.round((i / (width - 1)) * 255);
+    const o = i * 4;
+    data[o + 0] = v;
+    data[o + 1] = v;
+    data[o + 2] = v;
+    data[o + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(data, width, 1, THREE.RGBAFormat);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export default function Flowers({
   count = 100,
   width = 50,
@@ -15,6 +36,9 @@ export default function Flowers({
   const instancedMeshRefs = useRef([]);
   const dummyObj = useMemo(() => new THREE.Object3D(), []);
   const timeUniform = useMemo(() => ({ value: 0 }), []);
+
+  // Shared gradient map for toon shading
+  const gradientMap = useMemo(() => createToonGradientTexture(4), []);
 
   // Géométries de fleurs simples (style Genshin Impact)
   const flowerGeometries = useMemo(() => {
@@ -79,33 +103,31 @@ export default function Flowers({
     return geometries;
   }, []);
 
-  // Matériaux avec couleurs vives (style Genshin Impact)
+  // Matériaux toon aux couleurs vives (avec bandes)
   const flowerMaterials = useMemo(() => {
     const materials = [];
     
     const materialConfigs = [
-      { color: '#ff6b9d', emissive: '#330015' }, // Rose
-      { color: '#4ecdc4', emissive: '#003330' }, // Turquoise
-      { color: '#ffe66d', emissive: '#332800' }, // Jaune
-      { color: '#a8e6cf', emissive: '#003315' }, // Vert menthe
-      { color: '#ff8b9a', emissive: '#330010' }  // Rose pâle
+      { color: '#ff6b9d' }, // Rose
+      { color: '#4ecdc4' }, // Turquoise
+      { color: '#ffe66d' }, // Jaune
+      { color: '#a8e6cf' }, // Vert menthe
+      { color: '#ff8b9a' }  // Rose pâle
     ];
     
     materialConfigs.forEach(config => {
-      const material = new THREE.MeshStandardMaterial({
-        color: config.color,
-        emissive: config.emissive,
-        emissiveIntensity: 0.1,
-        roughness: 0.4,
-        metalness: 0.0,
+      const material = new THREE.MeshToonMaterial({
+        color: new THREE.Color(config.color),
         vertexColors: true,
         transparent: true,
-        opacity: 0.9
+        opacity: 0.95,
+        dithering: true,
+        gradientMap,
       });
 
       // Animation légère au vent
       material.onBeforeCompile = (shader) => {
-        shader.vertexShader = 'uniform float time;\n' + shader.vertexShader;
+        shader.vertexShader = 'uniform float time\n;' + shader.vertexShader;
         shader.uniforms.time = timeUniform;
         
         shader.vertexShader = shader.vertexShader.replace(
@@ -118,11 +140,8 @@ export default function Flowers({
           '#include <begin_vertex>',
           `#include <begin_vertex>
           vec3 worldPos = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);
-          
           float windTime = time * 1.2 + instanceRandom.x * 6.28;
           float windNoise = sin(windTime + worldPos.x * 0.2 + worldPos.z * 0.2) * 0.008;
-          
-          // Animation plus douce pour les fleurs
           float heightFactor = max(0.0, position.y);
           transformed.x += windNoise * heightFactor;
           transformed.z += windNoise * 0.6 * heightFactor;`
@@ -133,7 +152,7 @@ export default function Flowers({
     });
     
     return materials;
-  }, [timeUniform]);
+  }, [timeUniform, gradientMap]);
 
   // Initialisation des instances
   useEffect(() => {

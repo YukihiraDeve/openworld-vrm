@@ -19,6 +19,7 @@ import { SOUNDS, TEXTURES } from '../utils/const';
 import BackgroundMusic from './audio/BackgroundMusic';
 import { EmoteProvider, useEmoteContext } from '../context/EmoteContext';
 import EmoteMenu from '../ui/EmoteMenu/EmoteMenu';
+import LampPosts from './World/LampPosts';
 
 // Remettre les chemins des sons ici
 const stepSoundPaths = [
@@ -415,6 +416,19 @@ function SceneContent({ sunPosition, setSunPosition }) {
           position={[0, 0, 0]}
           frequency={TERRAIN_CONFIG.frequency}
           amplitude={TERRAIN_CONFIG.amplitude}
+        />
+        <LampPosts
+          paths={worldPaths}
+          frequency={TERRAIN_CONFIG.frequency}
+          amplitude={TERRAIN_CONFIG.amplitude}
+          spacing={12}
+          sideOffset={1.2}
+          postHeight={3.2}
+          postRadius={0.08}
+          lightColor={'#ffd8a8'}
+          lightIntensity={5.5}
+          lightDistance={14}
+          enableGlowSprite={true}
         />
       </Suspense>
 

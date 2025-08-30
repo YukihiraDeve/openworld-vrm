@@ -9,6 +9,31 @@ import { isPositionOnPath, getPathTransitionFactor } from './Paths';
 const tempVector3 = new THREE.Vector3();
 const tempMatrix4 = new THREE.Matrix4();
 
+// Helper: crée une texture 1D pour les bandes de toon-shading (4 niveaux par défaut)
+function createToonGradientTexture(steps = 4) {
+  const width = steps;
+  const height = 1;
+  const size = width * height * 4; // RGBA
+  const data = new Uint8Array(size);
+
+  for (let i = 0; i < width; i++) {
+    const v = Math.round((i / (width - 1)) * 255);
+    const offset = i * 4;
+    data[offset + 0] = v;
+    data[offset + 1] = v;
+    data[offset + 2] = v;
+    data[offset + 3] = 255;
+  }
+
+  const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 // Composant GrassGPT4 : herbe animée avec InstancedMesh pour meilleures performances
 export default function GrassGPT4({
   maxDensity = 10000,  // Densité maximale (près du joueur)
@@ -56,6 +81,9 @@ export default function GrassGPT4({
 
   // Uniforme temps pour animer le vent
   const timeUniform = useMemo(() => ({ value: 0 }), []);
+
+  // Gradient map toon pour le style Ghibli
+  const gradientMap = useMemo(() => createToonGradientTexture(4), []);
 
   useEffect(() => {
     grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
@@ -123,23 +151,26 @@ export default function GrassGPT4({
     return geo;
   }, []);
 
-  // Material optimisé avec shader simplifié
+  // Material toon avec bandes (style Ghibli) + animation de vent en vertex
   const material = useMemo(() => {
-    const mat = new THREE.MeshStandardMaterial({
+    const mat = new THREE.MeshToonMaterial({
+      color: new THREE.Color('#6ba85e'),
       map: grassTexture,
       alphaMap: noiseTexture,
       transparent: true,
       side: THREE.DoubleSide,
       vertexColors: true,
       alphaTest: 0.1,
-      depthWrite: true
+      depthWrite: true,
+      dithering: true,
+      gradientMap: gradientMap,
     });
 
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = 'uniform float time;\n' + shader.vertexShader;
       shader.uniforms.time = timeUniform;
       
-      // Shader simplifié pour de meilleures performances
+      // Animation de vent simplifiée
       shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
@@ -152,7 +183,7 @@ export default function GrassGPT4({
     };
 
     return mat;
-  }, [grassTexture, noiseTexture, timeUniform]);
+  }, [grassTexture, noiseTexture, timeUniform, gradientMap]);
 
   // Fonction optimisée pour calculer la visibilité
   const calculateInstanceVisibility = (instance, playerPos) => {
