@@ -8,10 +8,7 @@ import Ground from './World/Ground';
 import Player from '../experience/Player';
 import { MultiplayerContext } from '../experience/multiplayer/MultiplayerContext';
 import RemotePlayer from '../experience/multiplayer/RemotePlayer';
-import Grass from './World/Grass';
-import Bushes from './World/Bushes';
-import Flowers from './World/Flowers';
-import Trees from './World/Trees';
+
 import Paths, { createPaths } from './World/Paths';
 import Sky from './World/Sky';
 import Fog from './World/Fog';
@@ -19,7 +16,8 @@ import { SOUNDS, TEXTURES } from '../utils/const';
 import BackgroundMusic from './audio/BackgroundMusic';
 import { EmoteProvider, useEmoteContext } from '../context/EmoteContext';
 import EmoteMenu from '../ui/EmoteMenu/EmoteMenu';
-import LampPosts from './World/LampPosts';
+// import LampPosts from './World/LampPosts'; // Commented out to remove lamp posts
+import Grass from './World/Grass';
 
 // Remettre les chemins des sons ici
 const stepSoundPaths = [
@@ -36,6 +34,8 @@ const TERRAIN_CONFIG = {
   amplitude: 1,
   frequency: 0.1
 };
+
+const GRASS_POSITION = [0, 0, 0];
 
 // Système de gestion de performance intelligent
 class PerformanceManager {
@@ -80,27 +80,27 @@ class PerformanceManager {
     }
 
     const now = performance.now();
-    
+
     // Calculer le FPS actuel
     const currentFPS = 1 / deltaTime;
     this.frameTimings.push(currentFPS);
-    
+
     // Garder seulement les 120 dernières mesures (plus de stabilité)
     if (this.frameTimings.length > 120) {
       this.frameTimings.shift();
     }
-    
+
     // Mise à jour toutes les 5 secondes (plus patient)
     if (now - this.lastUpdate > 5000 && this.frameTimings.length >= 60) {
       const averageFPS = this.frameTimings.reduce((a, b) => a + b, 0) / this.frameTimings.length;
       const newQualityLevel = this.calculateOptimalQuality(averageFPS);
-      
+
       if (newQualityLevel !== this.currentQualityLevel) {
         console.log(`Auto quality change: ${this.currentQualityLevel} -> ${newQualityLevel} (avg FPS: ${averageFPS.toFixed(1)})`);
         this.currentQualityLevel = newQualityLevel;
         this.notifyQualityChange(newQualityLevel);
       }
-      
+
       this.lastUpdate = now;
       // Vider une partie de l'historique pour éviter l'inertie
       this.frameTimings = this.frameTimings.slice(-60);
@@ -116,7 +116,7 @@ class PerformanceManager {
     } else if (averageFPS < this.minAcceptableFPS * 0.8) { // Seulement si vraiment très bas
       return 0; // Passer en basse qualité seulement si critique
     }
-    
+
     return this.currentQualityLevel; // Garder le niveau actuel par défaut
   }
 
@@ -140,24 +140,24 @@ const performanceManager = new PerformanceManager();
 
 // Composant pour gérer le menu d'émotes en dehors du Canvas
 function EmoteMenuManager() {
-  const { 
-    currentEmote, 
-    isEmoteMenuOpen, 
-    closeEmoteMenu, 
-    triggerEmote 
+  const {
+    currentEmote,
+    isEmoteMenuOpen,
+    closeEmoteMenu,
+    triggerEmote
   } = useEmoteContext();
-  
+
   const { emitPlayerEmote } = useContext(MultiplayerContext);
 
   const handleEmoteSelect = useCallback((emote) => {
     const animationName = triggerEmote(emote);
     console.log(`Émote sélectionnée: ${emote.name} (${animationName}) - Type: ${emote.type}`);
-    
+
     // Émettre l'émote aux autres joueurs via le multijoueur
-    emitPlayerEmote({ 
-      emote: emote.id, 
+    emitPlayerEmote({
+      emote: emote.id,
       type: emote.type,
-      animation: animationName 
+      animation: animationName
     });
   }, [triggerEmote, emitPlayerEmote]);
 
@@ -176,13 +176,13 @@ function SceneContent({ sunPosition, setSunPosition }) {
   const { camera } = useThree();
   const { players, localPlayerId } = useContext(MultiplayerContext);
   const [qualityLevel, setQualityLevel] = useState(1);
-  
+
   // Ref pour la position du joueur (pour optimiser l'herbe)
   const playerPositionRef = useRef(new THREE.Vector3(0, 0, 0));
-  
+
   // Créer les chemins une seule fois avec cache
   const worldPaths = useMemo(() => createPaths(), []);
-  
+
   // Logique audio optimisée
   const [audioListener, setAudioListener] = useState(null);
   const stepSoundBuffers = useRef([]);
@@ -194,21 +194,21 @@ function SceneContent({ sunPosition, setSunPosition }) {
   // Initialiser l'AudioListener et charger les sons de manière asynchrone
   useEffect(() => {
     const listener = new THREE.AudioListener();
-    camera.add(listener); 
+    camera.add(listener);
     setAudioListener(listener);
 
     // Charger les sons en parallèle avec optimisation
     if (!audioLoadingPromise.current) {
       audioLoadingPromise.current = Promise.all(
-        stepSoundPaths.map(path => 
+        stepSoundPaths.map(path =>
           new Promise((resolve) => {
             const audioLoader = new THREE.AudioLoader();
-            audioLoader.load(path, 
+            audioLoader.load(path,
               buffer => {
                 console.log(`Son chargé: ${path}`);
                 resolve(buffer);
-              }, 
-              undefined, 
+              },
+              undefined,
               err => {
                 console.error(`Erreur de chargement du son ${path}:`, err);
                 resolve(null); // Résoudre avec null plutôt que rejeter
@@ -250,7 +250,7 @@ function SceneContent({ sunPosition, setSunPosition }) {
     performanceManager.addQualityChangeCallback(handleQualityChange);
     window.addEventListener('setQualityLevel', handleSetQualityLevel);
     window.addEventListener('setAutoAdaptation', handleSetAutoAdaptation);
-    
+
     return () => {
       performanceManager.removeQualityChangeCallback(handleQualityChange);
       window.removeEventListener('setQualityLevel', handleSetQualityLevel);
@@ -259,119 +259,30 @@ function SceneContent({ sunPosition, setSunPosition }) {
   }, []);
 
   const playerKey = useMemo(() => "local-player-" + Math.random().toString(36).substring(2, 9), []);
-  
-  // Paramètres d'herbe optimisés en fonction de la qualité
-  const grassParams = useMemo(() => {
-    const baseParams = {
-      position: [0, 0, 0],
-      amplitude: TERRAIN_CONFIG.amplitude,
-      frequency: TERRAIN_CONFIG.frequency,
-      width: TERRAIN_CONFIG.size,
-      height: TERRAIN_CONFIG.size
-    };
-    
-    switch (qualityLevel) {
-      case 0: // Basse qualité
-        return {
-          ...baseParams,
-          maxDensity: 800000, // Augmenté de 200k à 800k
-          lodLevels: [
-            { distance: 0, density: 1.0 },
-            { distance: 8, density: 0 },
-            { distance: 15, density: 0.6 },
-            { distance: 25, density: 0.3 },
-            { distance: 35, density: 0.1 }
-          ]
-        };
-      case 2: // Haute qualité
-        return {
-          ...baseParams,
-          maxDensity: 2000000, // Augmenté de 600k à 2M
-          lodLevels: [
-            { distance: 0, density: 1.0 },
-            { distance: 20, density: 0 },
-            { distance: 30, density: 0.9 },
-            { distance: 40, density: 0.8 },
-            { distance: 50, density: 0.7 },
-            { distance: 60, density: 0.5 },
-            { distance: 70, density: 0.3 },
-            { distance: 80, density: 0.1 }
-          ]
-        };
-      default: // Qualité moyenne
-        return {
-          ...baseParams,
-          maxDensity: 1200000, // Augmenté de 400k à 1.2M
-          lodLevels: [
-            { distance: 0, density: 1.0 },
-            { distance: 15, density: 0 },
-            { distance: 25, density: 0.8 },
-            { distance: 35, density: 0.6 },
-            { distance: 45, density: 0.4 },
-            { distance: 55, density: 0.2 },
-            { distance: 65, density: 0.1 }
-          ]
-        };
-    }
-  }, [qualityLevel]);
-  
-  // Paramètres des buissons adaptés à la qualité
-  const bushParams = useMemo(() => {
-    const baseParams = {
-      position: [0, 0, 0],
-      amplitude: TERRAIN_CONFIG.amplitude,
-      frequency: TERRAIN_CONFIG.frequency,
-      width: TERRAIN_CONFIG.size,
-      height: TERRAIN_CONFIG.size
-    };
-    
-    switch (qualityLevel) {
-      case 0: return { ...baseParams, count: 100 };
-      case 2: return { ...baseParams, count: 300 };
-      default: return { ...baseParams, count: 200 };
-    }
-  }, [qualityLevel]);
-  
-  // Paramètres des fleurs adaptés à la qualité
-  const flowerParams = useMemo(() => {
-    const baseParams = {
-      position: [0, 0, 0],
-      amplitude: TERRAIN_CONFIG.amplitude,
-      frequency: TERRAIN_CONFIG.frequency,
-      width: TERRAIN_CONFIG.size,
-      height: TERRAIN_CONFIG.size
-    };
-    
-    switch (qualityLevel) {
-      case 0: return { ...baseParams, count: 50 };
-      case 2: return { ...baseParams, count: 150 };
-      default: return { ...baseParams, count: 100 };
-    }
-  }, [qualityLevel]);
-  
+
   // Paramètres de brouillard adaptés à la qualité
   const fogParams = useMemo(() => {
     switch (qualityLevel) {
       case 0:
-        return { 
-          baseNear: 12, 
-          baseFar: 60, 
+        return {
+          baseNear: 12,
+          baseFar: 60,
           adaptationSpeed: 0.05,
           dynamicFog: false // Désactiver le brouillard dynamique en basse qualité
         };
       case 2:
-        return { 
-          baseNear: 35, 
-          baseFar: 120, 
+        return {
+          baseNear: 35,
+          baseFar: 120,
           adaptationSpeed: 0.015,
-          dynamicFog: true 
+          dynamicFog: true
         };
       default:
-        return { 
-          baseNear: 25, 
-          baseFar: 90, 
+        return {
+          baseNear: 25,
+          baseFar: 90,
           adaptationSpeed: 0.03,
-          dynamicFog: true 
+          dynamicFog: true
         };
     }
   }, [qualityLevel]);
@@ -388,36 +299,53 @@ function SceneContent({ sunPosition, setSunPosition }) {
   return (
     <>
       {/* Performance monitoring intégré */}
-      <PerformanceMonitor 
-        onIncline={monitorPerformance} 
+      <PerformanceMonitor
+        onIncline={monitorPerformance}
         onDecline={monitorPerformance}
         factor={0.5} // Seuil plus permissif
       />
-      
+
       {/* Musique de fond */}
       {audioListener && <BackgroundMusic audioListener={audioListener} />}
-      
+
       {/* Sky optimisé */}
       <Sky
         sunPosition={[5, 12, -8]}
         sunSize={qualityLevel === 0 ? 0.5 : 1}
-        sunColor='#fff3a0'
-        ambientIntensity={qualityLevel === 0 ? 0.5 : 0.65}
+        sunColor='#ffffff'
+        ambientIntensity={qualityLevel === 0 ? 0.5 : 0.5}
+        lightIntensity={1.0}
         preset='noon'
       />
-      
+
       {/* Brouillard adaptatif */}
-      <Fog color="#a0c1ea" {...fogParams} />
+      <Fog color="#87CEEB" {...fogParams} />
 
       {/* Rendu conditionnel des éléments selon la qualité */}
       <Suspense fallback={null}>
-        <Paths 
-          paths={worldPaths} 
+        <Paths
+          paths={worldPaths}
           position={[0, 0, 0]}
           frequency={TERRAIN_CONFIG.frequency}
           amplitude={TERRAIN_CONFIG.amplitude}
         />
-        <LampPosts
+
+        {/* Grass from Simple_Grass */}
+        <Grass
+          paths={worldPaths}
+          frequency={TERRAIN_CONFIG.frequency}
+          amplitude={TERRAIN_CONFIG.amplitude}
+          width={TERRAIN_CONFIG.size}
+          height={TERRAIN_CONFIG.size}
+          maxDensity={500000} // Reduced density due to too much grass
+          position={GRASS_POSITION}
+          playerRef={playerPositionRef}
+          players={players}
+          localPlayerId={localPlayerId}
+        />
+
+        {/* LampPosts commented out to remove lamp posts */}
+        {/* <LampPosts
           paths={worldPaths}
           frequency={TERRAIN_CONFIG.frequency}
           amplitude={TERRAIN_CONFIG.amplitude}
@@ -429,68 +357,41 @@ function SceneContent({ sunPosition, setSunPosition }) {
           lightIntensity={5.5}
           lightDistance={14}
           enableGlowSprite={true}
-        />
+        /> */}
       </Suspense>
 
-      <Suspense fallback={null}>
-        <Grass {...grassParams} playerPositionRef={playerPositionRef} paths={worldPaths} />
-      </Suspense>
-
-      {/* Rendu conditionnel de la végétation */}
-      {qualityLevel > 0 && (
-        <>
-          <Suspense fallback={null}>
-            <Bushes {...bushParams} playerPositionRef={playerPositionRef} />
-          </Suspense>
-
-          <Suspense fallback={null}>
-            <Flowers {...flowerParams} playerPositionRef={playerPositionRef} />
-          </Suspense>
-
-          <Suspense fallback={null}>
-            <Trees 
-              count={qualityLevel === 2 ? 700 : qualityLevel === 0 ? 300 : 500}
-              width={TERRAIN_CONFIG.size}
-              height={TERRAIN_CONFIG.size}
-              position={[0, 0, 0]}
-              frequency={TERRAIN_CONFIG.frequency}
-              amplitude={TERRAIN_CONFIG.amplitude}
-              paths={worldPaths}
-            />
-          </Suspense>
-        </>
-      )}
+      {/* Vegetation removed as per user request */}
 
       {/* Physics avec paramètres adaptés */}
-      <Physics 
-        gravity={[0, -9.81, 0]} 
+      <Physics
+        gravity={[0, -9.81, 0]}
         debug={false}
         interpolate={qualityLevel > 0}
         colliders={false}
         paused={false}
-        timeStep={qualityLevel === 0 ? 1/30 : 1/60} // Réduire la fréquence physique en basse qualité
+        timeStep={qualityLevel === 0 ? 1 / 30 : 1 / 60} // Réduire la fréquence physique en basse qualité
       >
-        <Ground 
-          paths={worldPaths} 
+        <Ground
+          paths={worldPaths}
           pathDetailTexture={TEXTURES.paths.sandstone.diffuse}
           baseTexture={TEXTURES.ground.rocky.diffuse}
         />
-        
+
         {/* Player local */}
         {audioListener && (
-          <Player 
+          <Player
             key={playerKey}
             audioListener={audioListener}
             stepSoundBuffers={stepSoundBuffers}
             playerPositionRef={playerPositionRef}
-                paths={worldPaths}
+            paths={worldPaths}
           />
         )}
-        
+
         {/* Joueurs distants avec LOD */}
         {audioListener && players && Object.entries(players).map(([id, playerData]) => {
           if (id === localPlayerId) return null;
-          
+
           // LOD pour les joueurs distants en basse qualité
           if (qualityLevel === 0 && playerPositionRef.current) {
             const distance = playerPositionRef.current.distanceTo(
@@ -500,18 +401,18 @@ function SceneContent({ sunPosition, setSunPosition }) {
                 playerData.position?.z || 0
               )
             );
-            
+
             // Ne pas rendre les joueurs distants très éloignés en basse qualité
             if (distance > 50) return null;
           }
-          
-          const remoteLocomotion = playerData?.locomotion || 'idle'; 
+
+          const remoteLocomotion = playerData?.locomotion || 'idle';
           return (
-            <RemotePlayer 
-              key={id} 
-              playerData={playerData} 
+            <RemotePlayer
+              key={id}
+              playerData={playerData}
               audioListener={audioListener}
-              stepSoundBuffers={stepSoundBuffers} 
+              stepSoundBuffers={stepSoundBuffers}
               locomotion={remoteLocomotion}
             />
           );
@@ -527,11 +428,11 @@ export default function CustomCanvas({ sunPosition, setSunPosition, children }) 
       <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
         <Canvas
           camera={{ position: [0, 5, 10], fov: 50 }}
-          shadows={{ 
+          shadows={{
             type: THREE.PCFSoftShadowMap,
             autoUpdate: true
           }}
-          gl={{ 
+          gl={{
             antialias: true,
             powerPreference: 'high-performance',
             precision: 'highp',
@@ -543,16 +444,16 @@ export default function CustomCanvas({ sunPosition, setSunPosition, children }) 
             preserveDrawingBuffer: false
           }}
           dpr={[1, 2]} // Limiter le device pixel ratio pour les performances
-          performance={{ 
+          performance={{
             min: 0.2, // Seuil minimum de performance
             max: 1.0, // Seuil maximum
             debounce: 200 // Délai avant ajustement
           }}
         >
           <SceneContent sunPosition={sunPosition} setSunPosition={setSunPosition} />
-          {children} 
+          {children}
         </Canvas>
-        
+
         {/* Menu d'émotes rendu en dehors du Canvas */}
         <EmoteMenuManager />
       </div>

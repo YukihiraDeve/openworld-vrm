@@ -24,11 +24,11 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
   const [avatarLoadedRef, setAvatarLoadedRef] = useState(null);
   const avatarObjectRef = useRef(null);
   const initialModelLoggedRef = useRef(false);
-  
-  const { 
-    emitPlayerMove, 
-    emitPlayerAnimation, 
-    localPlayerModel 
+
+  const {
+    emitPlayerMove,
+    emitPlayerAnimation,
+    localPlayerModel
   } = useContext(MultiplayerContext);
 
   // Système d'émotes
@@ -60,45 +60,64 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
     setAvatarLoadedRef(ref);
   }, []);
 
-  useFrame(() => {
+  // Ref pour la lumière directionnelle
+  const directionalLightRef = useRef(null);
+
+  // Trouver la lumière une seule fois au montage ou quand la scène change
+  useEffect(() => {
+    // Option 1: Utiliser la globale définie dans Sky.jsx
+    if (window.mainDirectionalLight) {
+      directionalLightRef.current = window.mainDirectionalLight;
+      return;
+    }
+
+    // Option 2: Fallback - Chercher dans la scène (une seule fois)
     if (avatarObjectRef.current) {
-      const playerPosition = avatarObjectRef.current.position;
-      
-      // Mettre à jour la position du joueur pour l'optimisation de l'herbe
+      let foundLight = null;
+      avatarObjectRef.current.parent?.parent?.traverse((object) => {
+        if (object.isDirectionalLight && !foundLight) {
+          foundLight = object;
+        }
+      });
+      directionalLightRef.current = foundLight;
+    }
+  }, []); // Exécuter une seule fois
+
+  useFrame(() => {
+
+    if (avatarObjectRef.current) {
+      const playerPosition = new THREE.Vector3();
+      avatarObjectRef.current.getWorldPosition(playerPosition);
+
+      // Mettre à jour la position du joueur pour l'optimisation de l'herbe et la physique
       if (playerPositionRef) {
         playerPositionRef.current.copy(playerPosition);
       }
-      
-      const directionalLights = [];
-      
-      // Recherche plus large des lumières dans la scène
-      avatarObjectRef.current.parent.parent.traverse((object) => {
-        if (object.isDirectionalLight) {
-          directionalLights.push(object);
+
+      if (directionalLightRef.current) {
+        const light = directionalLightRef.current;
+
+        // Assurer que la target existe
+        if (!light.target) {
+          light.target = new THREE.Object3D();
+          light.parent?.add(light.target);
         }
-      });
-      
-      if (directionalLights.length > 0) {
-        directionalLights.forEach(light => {
-          // Assurer que la target existe
-          if (!light.target) {
-            light.target = new THREE.Object3D();
-            light.parent.add(light.target);
-          }
-          
-          // Mettre à jour la target pour qu'elle suive le joueur
-          light.target.position.copy(playerPosition);
-          light.target.updateMatrixWorld();
-          
-          // Mise à jour du frustum de la caméra d'ombre
-          if (light.shadow && light.shadow.camera) {
-            // Centrer la caméra d'ombre sur le joueur
-            const shadowCameraTarget = playerPosition.clone();
-            light.shadow.camera.lookAt(shadowCameraTarget);
-            light.shadow.camera.updateProjectionMatrix();
-            light.shadow.needsUpdate = true;
-          }
-        });
+
+        // Mettre à jour la target pour qu'elle suive le joueur
+        // On évite de recréer des vecteurs ou matrices si possible
+        light.target.position.copy(playerPosition);
+        light.target.updateMatrixWorld();
+
+        // Mise à jour du frustum de la caméra d'ombre
+        if (light.shadow && light.shadow.camera) {
+          // Centrer la caméra d'ombre sur le joueur
+          // Pas besoin de clone() ici, lookAt accepte x,y,z ou Vector3
+          light.shadow.camera.lookAt(playerPosition);
+          light.shadow.camera.updateProjectionMatrix();
+
+          // NOTE: autoUpdate est true dans CustomCanvas, donc pas besoin de light.shadow.needsUpdate = true
+          // Le forcer peut casser les optimisations internes de Three.js
+        }
       }
     }
   });
@@ -116,7 +135,7 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
 
   return (
     <>
-      <VrmAvatar 
+      <VrmAvatar
         key={currentModel}
         vrmUrl={MODELS[currentModel]}
         idleAnimationUrl={ANIMATIONS['breathing-idle']}
@@ -138,8 +157,8 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
         emoteAnimationUrl={currentEmoteType === 'animation' && currentEmote ? ANIMATIONS[currentEmote] : null}
         emoteExpression={currentEmoteType === 'expression' ? currentEmote : null}
         paths={paths}
-      />    
-      
+      />
+
       {avatarObjectRef.current && <FollowCamera targetRef={avatarObjectRef} angle={cameraAngle} />}
     </>
   );

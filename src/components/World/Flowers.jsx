@@ -127,7 +127,7 @@ export default function Flowers({
 
       // Animation légère au vent
       material.onBeforeCompile = (shader) => {
-        shader.vertexShader = 'uniform float time\n;' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace(/^/, 'uniform float time;\n');
         shader.uniforms.time = timeUniform;
         
         shader.vertexShader = shader.vertexShader.replace(

@@ -4,7 +4,8 @@ import { useTexture } from '@react-three/drei';
 import { calculateHeight } from './Ground';
 
 // Classe pour définir un chemin
-class Path {
+// Classe pour définir un chemin
+export class Path {
   constructor(type, points, width, material = 'dirt') {
     this.type = type; // 'straight', 'curve', 'road'
     this.originalPoints = points; // Points originaux
@@ -16,13 +17,13 @@ class Path {
   // Génère un chemin lissé avec des courbes de Catmull-Rom pour des transitions ultra-fluides
   generateSmoothPath(originalPoints) {
     if (originalPoints.length < 2) return originalPoints;
-    
+
     const smoothPoints = [];
     const resolution = 20; // Nombre de points par segment pour des courbes ultra-lisses
-    
+
     // Étendre les points pour avoir des tangentes naturelles aux extrémités
     const extendedPoints = [...originalPoints];
-    
+
     // Ajouter un point fictif au début pour la tangente
     const firstDir = new THREE.Vector2(
       originalPoints[1].x - originalPoints[0].x,
@@ -32,7 +33,7 @@ class Path {
       originalPoints[0].x + firstDir.x,
       originalPoints[0].y + firstDir.y
     ));
-    
+
     // Ajouter un point fictif à la fin pour la tangente
     const lastIdx = originalPoints.length - 1;
     const lastDir = new THREE.Vector2(
@@ -43,14 +44,14 @@ class Path {
       originalPoints[lastIdx].x + lastDir.x,
       originalPoints[lastIdx].y + lastDir.y
     ));
-    
+
     // Générer les courbes de Catmull-Rom entre chaque segment
     for (let i = 1; i < extendedPoints.length - 2; i++) {
       const p0 = extendedPoints[i - 1];
       const p1 = extendedPoints[i];
       const p2 = extendedPoints[i + 1];
       const p3 = extendedPoints[i + 2];
-      
+
       // Générer des points le long de la courbe de Catmull-Rom
       for (let t = 0; t < resolution; t++) {
         const u = t / resolution;
@@ -58,10 +59,10 @@ class Path {
         smoothPoints.push(point);
       }
     }
-    
+
     // Ajouter le dernier point
     smoothPoints.push(originalPoints[originalPoints.length - 1]);
-    
+
     return smoothPoints;
   }
 
@@ -69,7 +70,7 @@ class Path {
   catmullRomSpline(p0, p1, p2, p3, t) {
     const t2 = t * t;
     const t3 = t2 * t;
-    
+
     // Formule de Catmull-Rom
     const x = 0.5 * (
       (2 * p1.x) +
@@ -77,14 +78,14 @@ class Path {
       (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
       (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
     );
-    
+
     const y = 0.5 * (
       (2 * p1.y) +
       (-p0.y + p2.y) * t +
       (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
       (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
     );
-    
+
     return new THREE.Vector2(x, y);
   }
 
@@ -97,15 +98,15 @@ class Path {
     for (let i = 0; i < this.points.length - 1; i++) {
       const start = this.points[i];
       const end = this.points[i + 1];
-      
+
       // Calculer la distance du point au segment de ligne
       const distance = this.distancePointToLineSegment(point, start, end);
-      
+
       if (distance <= effectiveWidth / 2) {
         return true;
       }
     }
-    
+
     return false;
   }
 
@@ -119,7 +120,7 @@ class Path {
     const dot = A * C + B * D;
     const lenSq = C * C + D * D;
     let param = -1;
-    
+
     if (lenSq !== 0) {
       param = dot / lenSq;
     }
@@ -143,7 +144,7 @@ class Path {
   }
 
   // Génère la géométrie du chemin avec largeur variable
-  generateGeometry() {
+  generateGeometry(frequency = 0.1, amplitude = 1) {
     const geometry = new THREE.BufferGeometry();
     const vertices = [];
     const uvs = [];
@@ -160,11 +161,11 @@ class Path {
     // Générer la géométrie continue avec des tangentes calculées de manière fluide
     for (let i = 0; i < this.points.length; i++) {
       const point = this.points[i];
-      
+
       // Calculer la tangente en utilisant plusieurs points pour plus de fluidité
       let tangent;
       const lookAhead = Math.min(3, Math.floor(this.points.length / 4)); // Regarder plus loin pour lisser
-      
+
       if (i === 0) {
         // Premier point : tangente basée sur les premiers points
         const endIdx = Math.min(i + lookAhead, this.points.length - 1);
@@ -183,34 +184,34 @@ class Path {
         // Point intermédiaire : moyenne pondérée des tangentes locales et globales
         const prevIdx = Math.max(i - lookAhead, 0);
         const nextIdx = Math.min(i + lookAhead, this.points.length - 1);
-        
+
         // Tangente locale (adjacente)
         const localTangent = new THREE.Vector2(
           this.points[i + 1].x - this.points[i - 1].x,
           this.points[i + 1].y - this.points[i - 1].y
         ).normalize();
-        
+
         // Tangente globale (plus large)
         const globalTangent = new THREE.Vector2(
           this.points[nextIdx].x - this.points[prevIdx].x,
           this.points[nextIdx].y - this.points[prevIdx].y
         ).normalize();
-        
+
         // Mélange pour une transition ultra-fluide
         tangent = new THREE.Vector2(
           (localTangent.x * 0.7 + globalTangent.x * 0.3),
           (localTangent.y * 0.7 + globalTangent.y * 0.3)
         ).normalize();
       }
-      
+
       // Calculer la perpendiculaire pour la largeur avec lissage
       const perpendicular = new THREE.Vector2(-tangent.y, tangent.x);
-      
+
       // Variation très douce de la largeur pour un aspect naturel
       const distanceFromStart = currentLength / totalLength;
       const widthVariation = 0.9 + 0.2 * Math.sin(distanceFromStart * Math.PI * 3) * 0.5; // Variation sinusoïdale douce
       const halfWidth = (this.width / 2) * widthVariation;
-      
+
       // Points gauche et droit avec un léger décalage aléatoire pour l'aspect naturel
       const randomOffset = 0.02; // Très petit décalage pour l'aspect organique
       const leftPoint = new THREE.Vector2(
@@ -221,27 +222,27 @@ class Path {
         point.x + perpendicular.x * halfWidth + (Math.random() - 0.5) * randomOffset,
         point.y + perpendicular.y * halfWidth + (Math.random() - 0.5) * randomOffset
       );
-      
+
       // Calculer les hauteurs du terrain
-      const leftHeight = calculateHeight(leftPoint.x, leftPoint.y, 0.1, 1);
-      const rightHeight = calculateHeight(rightPoint.x, rightPoint.y, 0.1, 1);
-      
-      // Offset minimal pour suivre parfaitement le terrain
-      const offset = 0.0001; // Légèrement plus haut pour être visible
-      
+      const leftHeight = calculateHeight(leftPoint.x, leftPoint.y, frequency, amplitude);
+      const rightHeight = calculateHeight(rightPoint.x, rightPoint.y, frequency, amplitude);
+
+      // Offset plus important pour éviter le z-fighting avec le sol
+      const offset = 0.03;
+
       // Ajouter les vertices (gauche et droit)
       vertices.push(
         leftPoint.x, leftHeight + offset, leftPoint.y,    // Vertex gauche
         rightPoint.x, rightHeight + offset, rightPoint.y  // Vertex droit
       );
-      
+
       // Calculer les UVs avec répétition naturelle
       const vPos = (currentLength / totalLength) * 3; // Répéter la texture 3 fois sur la longueur
       uvs.push(
         0, vPos % 1,  // Côté gauche
         1, vPos % 1   // Côté droit
       );
-      
+
       // Ajouter à la longueur courante si ce n'est pas le dernier point
       if (i < this.points.length - 1) {
         currentLength += this.points[i].distanceTo(this.points[i + 1]);
@@ -251,7 +252,7 @@ class Path {
     // Créer les indices pour connecter les vertices de manière fluide
     for (let i = 0; i < this.points.length - 1; i++) {
       const baseIndex = i * 2; // Chaque point génère 2 vertices (gauche et droit)
-      
+
       // Créer un quad entre les points i et i+1 avec faces vers le haut
       indices.push(
         baseIndex, baseIndex + 1, baseIndex + 2,      // Triangle 1
@@ -281,34 +282,34 @@ class Path {
     }
 
     const pathHalfWidth = this.width / 2;
-    
+
     // Zone du chemin lui-même (0% d'herbe)
     if (minDistance <= pathHalfWidth) {
       return 0;
     }
-    
+
     // Zone de transition
     const transitionStart = pathHalfWidth;
     const transitionEnd = pathHalfWidth + transitionDistance;
-    
+
     if (minDistance <= transitionEnd) {
       // Transition douce avec courbe sigmoïde pour plus de naturel
       const t = (minDistance - transitionStart) / transitionDistance;
       // Courbe sigmoïde pour transition plus naturelle
       return t * t * (3 - 2 * t); // smoothstep
     }
-    
+
     // Zone normale (100% d'herbe)
     return 1;
   }
 }
 
 // Composant principal des chemins
-export default function Paths({ 
+export default function Paths({
   paths = [],
   position = [0, 0, 0],
   frequency = 0.1,
-  amplitude = 1 
+  amplitude = 1
 }) {
   const groupRef = useRef();
 
@@ -317,7 +318,7 @@ export default function Paths({
   const [hasTextureError, setHasTextureError] = useState(false);
 
   // Charger les textures avec useTexture (toujours appelé)
-  const diffuseTexture = useTexture('/assets/textures/path/sandstone_cracks_diff_4k.jpg', 
+  const diffuseTexture = useTexture('/assets/textures/path/sandstone_cracks_diff_4k.jpg',
     (texture) => {
       console.log('Texture diffuse chargée');
       setTexturesLoaded(true);
@@ -342,7 +343,7 @@ export default function Paths({
         texture.anisotropy = 16;
         texture.flipY = false;
       });
-      
+
       console.log('Textures configurées avec succès');
     }
   }, [diffuseTexture, roughnessTexture, displacementTexture, hasTextureError]);
@@ -392,9 +393,9 @@ export default function Paths({
   const pathMeshes = useMemo(() => {
     return paths.map((pathData, index) => {
       const path = new Path(pathData.type, pathData.points, pathData.width, pathData.material);
-      const geometry = path.generateGeometry();
+      const geometry = path.generateGeometry(frequency, amplitude);
       const material = materials[path.material] || materials.dirt;
-      
+
       return {
         key: `path-${index}`,
         geometry,
@@ -406,17 +407,18 @@ export default function Paths({
 
   return (
     <group ref={groupRef} position={position}>
-      {/* Chemins supprimés - on garde seulement l'effet de transition sur le sol */}
-      {/* 
+      {/* Chemins supprimés - on garde seulement l'effet de transition sur le sol */
+      /* 
       {pathMeshes.map(({ key, geometry, material }) => (
         <mesh
           key={key}
           geometry={geometry}
           material={material}
           receiveShadow
+          castShadow
         />
       ))}
-      */}
+      */ }
     </group>
   );
 }
@@ -424,88 +426,31 @@ export default function Paths({
 // Fonction utilitaire pour créer des chemins prédéfinis
 export function createPaths() {
   return [
-    // Chemin principal sinueux qui traverse le monde
+    // Route Principale : Grande traverse d'Ouest en Est (déborde de la carte)
     {
       type: 'road',
       material: 'dirt',
-      width: 2.8,
+      width: 4.0,
       points: [
-        new THREE.Vector2(-30, -25),
-        new THREE.Vector2(-20, -18),
-        new THREE.Vector2(-12, -8),
-        new THREE.Vector2(-6, 2),
-        new THREE.Vector2(2, 8),
-        new THREE.Vector2(12, 12),
-        new THREE.Vector2(20, 18),
-        new THREE.Vector2(28, 25)
+        new THREE.Vector2(-60, -15), // Hors map Ouest
+        new THREE.Vector2(-30, -12),
+        new THREE.Vector2(-10, -5),  // Intersection
+        new THREE.Vector2(10, 0),
+        new THREE.Vector2(40, -5),
+        new THREE.Vector2(60, -10)   // Hors map Est
       ]
     },
-    // Chemin secondaire avec de belles courbes
+    // Route Secondaire : Embranchement vers le Nord-Est
     {
-      type: 'curve',
+      type: 'road',
       material: 'dirt',
-      width: 2.0,
+      width: 3.0,
       points: [
-        new THREE.Vector2(-25, 5),
-        new THREE.Vector2(-18, 12),
-        new THREE.Vector2(-8, 15),
-        new THREE.Vector2(0, 12),
-        new THREE.Vector2(8, 8),
-        new THREE.Vector2(15, 3),
-        new THREE.Vector2(22, -2)
-      ]
-    },
-    // Petit sentier serpentant
-    {
-      type: 'curve',
-      material: 'dirt',
-      width: 1.4,
-      points: [
-        new THREE.Vector2(8, -22),
-        new THREE.Vector2(12, -15),
-        new THREE.Vector2(16, -8),
-        new THREE.Vector2(18, -2),
-        new THREE.Vector2(19, 5),
-        new THREE.Vector2(17, 12),
-        new THREE.Vector2(13, 18),
-        new THREE.Vector2(8, 22)
-      ]
-    },
-    // Chemin en boucle naturelle
-    {
-      type: 'curve',
-      material: 'dirt',
-      width: 1.6,
-      points: [
-        new THREE.Vector2(-15, -15),
-        new THREE.Vector2(-8, -18),
-        new THREE.Vector2(0, -16),
-        new THREE.Vector2(6, -12),
-        new THREE.Vector2(8, -6),
-        new THREE.Vector2(6, 0),
-        new THREE.Vector2(0, 2),
-        new THREE.Vector2(-6, 0),
-        new THREE.Vector2(-10, -5),
-        new THREE.Vector2(-12, -10),
-        new THREE.Vector2(-15, -15)
-      ]
-    },
-    // Sentier de montagne sinueux
-    {
-      type: 'curve',
-      material: 'stone',
-      width: 1.2,
-      points: [
-        new THREE.Vector2(-22, -8),
-        new THREE.Vector2(-18, -5),
-        new THREE.Vector2(-14, -3),
-        new THREE.Vector2(-10, 0),
-        new THREE.Vector2(-7, 4),
-        new THREE.Vector2(-5, 8),
-        new THREE.Vector2(-4, 12),
-        new THREE.Vector2(-6, 16),
-        new THREE.Vector2(-10, 19),
-        new THREE.Vector2(-15, 20)
+        new THREE.Vector2(-10, -5),  // Intersection parfaite
+        new THREE.Vector2(-5, 10),
+        new THREE.Vector2(10, 30),
+        new THREE.Vector2(30, 50),
+        new THREE.Vector2(40, 60)    // Hors map Nord-Est
       ]
     }
   ];
@@ -514,13 +459,13 @@ export function createPaths() {
 // Fonction pour calculer le facteur de transition pour tous les chemins (utilisée par Grass)
 export function getPathTransitionFactor(x, z, paths, transitionDistance = 1.2) {
   let minTransition = 1; // Commence avec 100% d'herbe
-  
+
   for (const pathData of paths) {
     const path = new Path(pathData.type, pathData.points, pathData.width, pathData.material);
     const transition = path.getPathTransition(x, z, transitionDistance);
     minTransition = Math.min(minTransition, transition);
   }
-  
+
   return minTransition;
 }
 

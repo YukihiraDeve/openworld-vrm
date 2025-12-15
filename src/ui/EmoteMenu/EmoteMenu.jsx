@@ -12,7 +12,7 @@ const EMOTES = [
     type: 'animation',
     animation: 'salute'
   },
-  
+
   // Émotes avec expressions faciales VRM
   {
     id: 'happy',
@@ -54,7 +54,7 @@ const EMOTES = [
     type: 'expression',
     expression: 'neutral'
   },
-  
+
   // On peut facilement ajouter d'autres émotes ici
   // {
   //   id: 'dance',
@@ -66,11 +66,11 @@ const EMOTES = [
   // },
 ];
 
-export default function EmoteMenu({ 
-  isOpen, 
-  onClose, 
-  onEmoteSelect, 
-  currentEmote = null 
+export default function EmoteMenu({
+  isOpen,
+  onClose,
+  onEmoteSelect,
+  currentEmote = null
 }) {
   const menuRef = useRef(null);
 
@@ -82,7 +82,7 @@ export default function EmoteMenu({
       if (event.key === 'Escape') {
         onClose();
       }
-      
+
       // Permettre de sélectionner une émote avec les touches numériques
       const keyPressed = event.key;
       const emote = EMOTES.find(e => e.key === keyPressed);
@@ -126,7 +126,7 @@ export default function EmoteMenu({
           <h2 className="emote-menu-title">Émotes</h2>
           <p className="emote-menu-subtitle">Sélectionnez une émote ou utilisez les touches numériques</p>
         </div>
-        
+
         <div className="emote-grid">
           {EMOTES.map((emote) => (
             <div
@@ -135,13 +135,16 @@ export default function EmoteMenu({
               onClick={() => handleEmoteClick(emote)}
               title={`${emote.name} (Touche ${emote.key})`}
             >
-              <div className="emote-item-key">{emote.key}</div>
-              <span className="emote-item-icon">{emote.icon}</span>
-              <p className="emote-item-name">{emote.name}</p>
+              <div className="emote-item-glow"></div>
+              <div className="emote-item-content">
+                <div className="emote-item-key">{emote.key}</div>
+                <span className="emote-item-icon">{emote.icon}</span>
+                <p className="emote-item-name">{emote.name}</p>
+              </div>
             </div>
           ))}
         </div>
-        
+
         <div className="emote-menu-footer">
           <p className="emote-menu-close">Appuyez sur <strong>Échap</strong> pour fermer</p>
         </div>

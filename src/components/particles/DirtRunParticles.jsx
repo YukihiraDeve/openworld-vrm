@@ -1,199 +1,256 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useTexture } from '@react-three/drei';
-import { isPositionOnPath } from '../World/Paths';
+import { Path } from '../World/Paths';
 import { calculateHeight } from '../World/Ground';
 
-// Intervalle des "pas" en course pour synchroniser approximativement les bursts
-const RUN_STEP_INTERVAL_SECONDS = 0.3;
+// Intervalle des "pas" en course
+const RUN_STEP_INTERVAL_SECONDS = 0.25;
+const MAX_PARTICLES = 150;
 
-// Taille du pool pour limiter les allocations runtime
-const MAX_PARTICLE_COUNT = 60;
+// Shader pour les particules (Points) pour un rendu ultra-rapide (1 Draw Call)
+const particlesVertexShader = `
+attribute float size;
+attribute float opacity;
+varying float vOpacity;
+void main() {
+  vOpacity = opacity;
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  // Taille adaptée à la distance (attenuation)
+  gl_PointSize = size * (300.0 / -mvPosition.z);
+}
+`;
+
+const particlesFragmentShader = `
+uniform sampler2D map;
+varying float vOpacity;
+void main() {
+  vec4 texColor = texture2D(map, gl_PointCoord);
+  if (texColor.a < 0.1) discard; // Alpha test
+  gl_FragColor = vec4(texColor.rgb, texColor.a * vOpacity);
+}
+`;
 
 export default function DirtRunParticles({ targetRef, locomotion, movementDirection, paths }) {
   const { scene } = useThree();
   const texture = useTexture('/assets/particle/dirt_01.png');
 
-  const particleGroupRef = useRef(null);
-  const poolRef = useRef([]);
+  // Refs pour la logique système
+  const geometryRef = useRef(null);
+  const materialRef = useRef(null);
+  const pointsRef = useRef(null);
+
+  // Données des particules (CPU side simulation state)
+  const particlesData = useRef([]);
   const lastSpawnTimeRef = useRef(0);
 
-  // Crée le groupe et le pool au montage
+  // Pré-calculer les objets Path
+  const pathObjects = useMemo(() => {
+    if (!paths) return [];
+    return paths.map(p => new Path(p.type, p.points, p.width, p.material));
+  }, [paths]);
+
+  // Initialisation du système de particules (Points)
   useEffect(() => {
-    const group = new THREE.Group();
-    group.name = 'DirtRunParticlesGroup';
-    scene.add(group);
-    particleGroupRef.current = group;
-
-    // Préparer le pool de sprites
-    const pool = [];
-    for (let i = 0; i < MAX_PARTICLE_COUNT; i++) {
-      const material = new THREE.SpriteMaterial({
-        map: texture,
-        transparent: true,
-        depthWrite: false,
-        depthTest: true,
-        opacity: 0,
-        color: new THREE.Color(0.75, 0.6, 0.45),
-      });
-      const sprite = new THREE.Sprite(material);
-      sprite.visible = false;
-      sprite.scale.set(0.6, 0.6, 1);
-      group.add(sprite);
-
-      pool.push({
-        sprite,
-        velocity: new THREE.Vector3(),
-        lifeSeconds: 0,
-        maxLifeSeconds: 0,
+    // 1. Initialiser l'état de simulation
+    const data = [];
+    for (let i = 0; i < MAX_PARTICLES; i++) {
+      data.push({
         active: false,
+        life: 0,
+        maxLife: 1,
+        velocity: new THREE.Vector3(),
+        groundY: 0
       });
     }
-    poolRef.current = pool;
+    particlesData.current = data;
+
+    // 2. Créer la géométrie avec buffers
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(MAX_PARTICLES * 3);
+    const sizes = new Float32Array(MAX_PARTICLES);
+    const opacities = new Float32Array(MAX_PARTICLES);
+
+    // Initialiser hors champ
+    for (let i = 0; i < MAX_PARTICLES; i++) {
+      positions[i * 3 + 1] = -1000; // Y = -1000 (caché sous le sol)
+    }
+
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1));
+
+    geometryRef.current = geo;
+
+    // 3. Créer le Material Shader
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: texture }
+      },
+      vertexShader: particlesVertexShader,
+      fragmentShader: particlesFragmentShader,
+      transparent: true,
+      depthWrite: false, // Important pour éviter les problèmes de tri (z-fighting partiel)
+      depthTest: true,
+      blending: THREE.NormalBlending
+    });
+    materialRef.current = mat;
+
+    // 4. Créer l'objet Points et l'ajouter à la scène
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false; // Toujours rendre pour éviter les bugs si la bounding box n'est pas mise à jour
+    points.name = "DirtParticlesPoints";
+    scene.add(points);
+    pointsRef.current = points;
 
     return () => {
-      // Cleanup
-      if (particleGroupRef.current) {
-        scene.remove(particleGroupRef.current);
-      }
-      poolRef.current.forEach((p) => {
-        if (p.sprite) {
-          p.sprite.visible = false;
-          if (p.sprite.material) {
-            p.sprite.material.dispose();
-          }
-          if (particleGroupRef.current && p.sprite.parent === particleGroupRef.current) {
-            particleGroupRef.current.remove(p.sprite);
-          }
-        }
-      });
-      poolRef.current = [];
-      particleGroupRef.current = null;
+      scene.remove(points);
+      geo.dispose();
+      mat.dispose();
     };
   }, [scene, texture]);
 
-  // Spawner util
+  // Spawner optimisé
   const spawnBurst = (worldPosition, runDirection) => {
-    if (!particleGroupRef.current || poolRef.current.length === 0) return;
+    if (!geometryRef.current) return;
 
-    // Position au niveau du sol (utilise le même terrain que Ground)
+    // Calculer le sol une fois pour le burst
     const groundY = calculateHeight(worldPosition.x, worldPosition.z, 0.1, 1);
-    const basePosY = groundY + 0.05;
 
-    // Normaliser la direction de course
+    // Direction
     const spawnDir = new THREE.Vector3(runDirection.x, 0, runDirection.z);
-    if (spawnDir.lengthSq() === 0) {
-      spawnDir.set(Math.random() * 2 - 1, 0, Math.random() * 2 - 1);
-    }
+    if (spawnDir.lengthSq() < 0.01) spawnDir.set(Math.random() - 0.5, 0, Math.random() - 0.5);
     spawnDir.normalize();
 
-    // Nombre de particules par burst
-    const count = 10;
-    for (let i = 0; i < count; i++) {
-      const slot = poolRef.current.find((p) => !p.active);
-      if (!slot) break;
+    let spawnedCount = 0;
+    const burstSize = 8; // Nombre de particules par pas
 
-      const sprite = slot.sprite;
+    // Trouver des slots inactifs
+    for (let i = 0; i < MAX_PARTICLES && spawnedCount < burstSize; i++) {
+      const p = particlesData.current[i];
+      if (p.active) continue;
 
-      // Position initiale avec un léger jitter
-      const jitterX = (Math.random() - 0.5) * 0.25;
-      const jitterZ = (Math.random() - 0.5) * 0.25;
-      sprite.position.set(
-        worldPosition.x + jitterX,
-        basePosY + Math.random() * 0.06,
-        worldPosition.z + jitterZ
+      // Activer la particule
+      p.active = true;
+      p.life = 0;
+      p.maxLife = 0.5 + Math.random() * 0.4;
+      p.groundY = groundY;
+
+      // Velocity
+      const speed = 0.5 + Math.random() * 1.5; // Vers l'arrière et le haut
+      // Boost vertical
+      const up = 1.5 + Math.random() * 1.0;
+      const spread = (Math.random() - 0.5) * 1.5;
+
+      // Vitesse: derrière + spread
+      p.velocity.set(
+        -spawnDir.x * speed + spawnDir.z * spread,
+        up,
+        -spawnDir.z * speed - spawnDir.x * spread
       );
 
-      // Vitesse initiale: direction de course + écart latéral + montée légère
-      const side = new THREE.Vector3(-spawnDir.z, 0, spawnDir.x).multiplyScalar((Math.random() - 0.5) * 0.6);
-      const forward = spawnDir.clone().multiplyScalar(0.8 + Math.random() * 0.9);
-      const up = new THREE.Vector3(0, 1, 0).multiplyScalar(0.8 + Math.random() * 0.7);
-      slot.velocity.copy(forward.add(side).add(up));
+      // Position initiale dans le buffer
+      const attrPos = geometryRef.current.attributes.position.array;
+      attrPos[i * 3] = worldPosition.x + (Math.random() - 0.5) * 0.3;
+      attrPos[i * 3 + 1] = groundY + 0.1;
+      attrPos[i * 3 + 2] = worldPosition.z + (Math.random() - 0.5) * 0.3;
 
-      // Apparence
-      sprite.visible = true;
-      if (sprite.material) {
-        sprite.material.opacity = 0.8;
-        sprite.material.rotation = Math.random() * Math.PI * 2;
-      }
-      const scale = 0.4 + Math.random() * 0.6;
-      sprite.scale.set(scale, scale, 1);
+      // Taille initiale
+      const attrSize = geometryRef.current.attributes.size.array;
+      attrSize[i] = 1.0 + Math.random() * 2.0; // Taille visible
 
-      // Vie
-      slot.lifeSeconds = 0;
-      slot.maxLifeSeconds = 0.7 + Math.random() * 0.35;
-      slot.active = true;
+      // Opacité initiale
+      const attrOpacity = geometryRef.current.attributes.opacity.array;
+      attrOpacity[i] = 0.6 + Math.random() * 0.4;
+
+      spawnedCount++;
     }
   };
 
-  // Update boucle
   useFrame((state, delta) => {
-    // Mettre à jour les particules existantes
-    for (const p of poolRef.current) {
+    if (!geometryRef.current || !pointsRef.current) return;
+
+    const dt = Math.min(delta, 0.1);
+    const positions = geometryRef.current.attributes.position.array;
+    const sizes = geometryRef.current.attributes.size.array;
+    const opacities = geometryRef.current.attributes.opacity.array;
+
+    let needsUpdate = false;
+
+    // 1. Simulation Loop (Pure Math)
+    for (let i = 0; i < MAX_PARTICLES; i++) {
+      const p = particlesData.current[i];
       if (!p.active) continue;
 
-      // Physique simple
-      p.velocity.x *= 0.985;
-      p.velocity.z *= 0.985;
-      p.velocity.y -= 2.5 * delta; // gravité douce
+      needsUpdate = true;
 
-      p.sprite.position.x += p.velocity.x * delta;
-      p.sprite.position.y += p.velocity.y * delta;
-      p.sprite.position.z += p.velocity.z * delta;
-
-      // Coller au sol si nécessaire
-      const groundY = calculateHeight(p.sprite.position.x, p.sprite.position.z, 0.1, 1) + 0.02;
-      if (p.sprite.position.y < groundY) {
-        p.sprite.position.y = groundY;
-        p.velocity.y *= -0.15; // léger rebond amorti
-        p.velocity.x *= 0.9;
-        p.velocity.z *= 0.9;
-      }
-
-      // Vie et transparence
-      p.lifeSeconds += delta;
-      const t = Math.min(1, p.lifeSeconds / p.maxLifeSeconds);
-      const alpha = (1 - t) * 0.8;
-      if (p.sprite.material) {
-        p.sprite.material.opacity = alpha;
-      }
-      // Légère expansion
-      const baseScale = Math.max(p.sprite.scale.x, 0.001);
-      const newScale = baseScale * (1 + 0.4 * delta);
-      p.sprite.scale.set(newScale, newScale, 1);
-
-      if (t >= 1) {
-        // Désactiver
+      // Age
+      p.life += dt;
+      if (p.life >= p.maxLife) {
         p.active = false;
-        p.sprite.visible = false;
-        if (p.sprite.material) {
-          p.sprite.material.opacity = 0;
+        opacities[i] = 0;
+        positions[i * 3 + 1] = -1000; // Cacher sous le sol
+        continue;
+      }
+
+      // Physique
+      p.velocity.y -= 6.0 * dt; // Gravité plus forte pour retomber vite
+      p.velocity.x *= 0.92; // Friction air plus forte
+      p.velocity.z *= 0.92;
+
+      // Update Position State
+      const idx = i * 3;
+      positions[idx] += p.velocity.x * dt;
+      positions[idx + 1] += p.velocity.y * dt;
+      positions[idx + 2] += p.velocity.z * dt;
+
+      // Sol collision simple
+      if (positions[idx + 1] < p.groundY) {
+        positions[idx + 1] = p.groundY + 0.05;
+        p.velocity.y = 0;
+        // Could add bounce here but dirt usually doesn't bounce much
+      }
+
+      // Update Visuals
+      const lifeRatio = p.life / p.maxLife;
+      opacities[i] = (1.0 - lifeRatio) * 0.8; // Fade out
+      sizes[i] += dt * 4.0; // Grandir plus vite
+    }
+
+    // 2. Commit updates to GPU only if needed
+    if (needsUpdate) {
+      geometryRef.current.attributes.position.needsUpdate = true;
+      geometryRef.current.attributes.size.needsUpdate = true;
+      geometryRef.current.attributes.opacity.needsUpdate = true;
+    }
+
+    // 3. Spawning Logic
+    if (locomotion === 'run' && targetRef?.current && paths) {
+      const time = state.clock.elapsedTime;
+      if (time - lastSpawnTimeRef.current > RUN_STEP_INTERVAL_SECONDS) {
+        // Position joueur
+        const playerWorldPos = new THREE.Vector3();
+        targetRef.current.getWorldPosition(playerWorldPos);
+
+        // Path Check Optimisé
+        let onPath = false;
+        // Check rapide
+        for (let i = 0; i < pathObjects.length; i++) {
+          if (pathObjects[i].isOnPath(playerWorldPos.x, playerWorldPos.z, 0.4)) {
+            onPath = true;
+            break;
+          }
+        }
+
+        if (onPath) {
+          lastSpawnTimeRef.current = time;
+          spawnBurst(playerWorldPos, movementDirection || new THREE.Vector3(0, 0, 1));
         }
       }
-    }
-
-    // Spawning condition: courir + être sur un chemin
-    if (locomotion !== 'run' || !targetRef?.current || !paths || paths.length === 0) {
-      return;
-    }
-
-    // Position monde du joueur
-    const playerWorldPos = new THREE.Vector3();
-    targetRef.current.getWorldPosition(playerWorldPos);
-
-    // Vérifier si le joueur est sur un chemin (utilise X,Z)
-    const onPath = isPositionOnPath(playerWorldPos.x, playerWorldPos.z, paths, 0.4);
-    if (!onPath) return;
-
-    const elapsed = state.clock.elapsedTime;
-    if (elapsed - lastSpawnTimeRef.current >= RUN_STEP_INTERVAL_SECONDS) {
-      lastSpawnTimeRef.current = elapsed;
-      spawnBurst(playerWorldPos, movementDirection || new THREE.Vector3(0, 0, 0));
     }
   });
 
   return null;
 }
-
-
