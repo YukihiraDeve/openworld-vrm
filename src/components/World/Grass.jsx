@@ -161,6 +161,9 @@ vNormal = normalize(normalMatrix * rotatedNormal);
 
 `;
 
+// Detect mobile
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 const GrassChunk = memo(function GrassChunk({
   chunkX,
   chunkZ,
@@ -264,6 +267,15 @@ const GrassChunk = memo(function GrassChunk({
     return () => { isMounted = false; };
   }, [chunkX, chunkZ, chunkSize, density, pathObjects, frequency, amplitude]);
 
+  // Cleanup geometry when it changes or component unmounts
+  useEffect(() => {
+    return () => {
+      if (geometry) {
+        geometry.dispose();
+      }
+    };
+  }, [geometry]);
+
   if (!geometry) return null;
 
   return (
@@ -287,11 +299,24 @@ const Grass = memo(function Grass({
   frequency = 0.1,
   amplitude = 1,
   paths = [],
+  qualityLevel = 1, // Default to medium
 
   playerRef,
   players = {}, // New prop for remote players
   localPlayerId
 }) {
+  // Adjust density based on quality and device
+  const effectiveDensity = useMemo(() => {
+    let multiplier = 1;
+    if (isMobile) multiplier *= 0.4; // Significantly reduce for mobile (thermal throttling prev)
+    
+    // Quality adjustments
+    if (qualityLevel === 0) multiplier *= 0.5;
+    if (qualityLevel === 2) multiplier *= 1.5;
+    
+    return Math.floor(maxDensity * multiplier);
+  }, [maxDensity, qualityLevel]);
+
   // Memoize path objects once for all chunks
   const pathObjects = useMemo(() => {
     return paths.map(p => new Path(p.type, p.points, p.width, p.material));
@@ -360,7 +385,7 @@ const Grass = memo(function Grass({
     const totalChunks = cols * rows;
 
     // Density per chunk to match total requested density
-    const densityPerChunk = Math.floor(maxDensity / totalChunks);
+    const densityPerChunk = Math.floor(effectiveDensity / totalChunks);
 
     const chunkList = [];
     const startX = -width / 2 + CHUNK_SIZE / 2;
@@ -378,7 +403,7 @@ const Grass = memo(function Grass({
       }
     }
     return chunkList;
-  }, [width, height, maxDensity, position]);
+  }, [width, height, effectiveDensity, position]);
 
   return (
     <group>

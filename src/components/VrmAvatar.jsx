@@ -105,6 +105,7 @@ export default function VrmAvatar({
   emoteAnimationUrl = null, // URL de l'animation d'émote
   emoteExpression = null, // Expression faciale à afficher
   paths = null,
+  silentLoading = false, // Ne pas émettre d'événements globaux de chargement
 }) {
   const groupRef = useRef(); // Référence au groupe contenant le modèle visuel
   const vrmRef = useRef(); // Référence à l'instance VRM chargée
@@ -113,6 +114,12 @@ export default function VrmAvatar({
   const actionsRef = useRef({}); 
   const currentActionRef = useRef(null); 
   const [modelLoaded, setModelLoaded] = useState(false); // Pour le callback onLoad
+
+  // Optimisation Mobile: Si c'est un joueur distant (pas de collider), on désactive les ombres
+  // et on simplifie le rendu
+  const isRemote = !capsuleCollider;
+  // Détection mobile simple
+  const isMobile = typeof window !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   
   // Ref pour stocker les dernières valeurs de props pour useFrame
   const latestPropsRef = useRef({ position, rotation });
@@ -213,9 +220,10 @@ export default function VrmAvatar({
         await loadAnimations(cachedVrm, animMixer);
       
       if (onLoad && !modelLoaded) {
-           groupRef.current.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
+        groupRef.current.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
         onLoad(groupRef.current);
         setModelLoaded(true);
+        window.dispatchEvent(new CustomEvent('vrm-loading-success'));
       }
       return;
     }
@@ -237,9 +245,17 @@ export default function VrmAvatar({
 
       loadedVrmInstance.scene.traverse((object) => {
         if (object.isMesh) {
-          object.castShadow = true;
-          object.receiveShadow = true;
-          object.frustumCulled = false;
+          // Optimisation: Pas d'ombres pour les joueurs distants sur mobile
+          const shadowsEnabled = !(isRemote && isMobile);
+          object.castShadow = shadowsEnabled;
+          object.receiveShadow = shadowsEnabled;
+          object.frustumCulled = true; // Réactiver le frustum culling pour les perfs
+
+          // Optimisation Texture: Réduire la qualité si mobile + distant
+          if (isRemote && isMobile && object.material && object.material.map) {
+               object.material.map.minFilter = THREE.LinearFilter;
+               object.material.map.generateMipmaps = false; 
+          }
         }
       });
 
@@ -258,13 +274,16 @@ export default function VrmAvatar({
            groupRef.current.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
         onLoad(groupRef.current);
         setModelLoaded(true);
+        if (!silentLoading) window.dispatchEvent(new CustomEvent('vrm-loading-success'));
       }
       } catch (error) {
-      console.error("Erreur de chargement VRM:", error);
+        console.error("Erreur de chargement VRM:", error);
+        if (!silentLoading) window.dispatchEvent(new CustomEvent('vrm-loading-error', { detail: { error: error.message } }));
       }
     };
 
     if (vrmUrl) { // Ne charger que si vrmUrl est fourni
+        if (!silentLoading) window.dispatchEvent(new CustomEvent('vrm-loading-start'));
         loadVrm();
     }
 
@@ -335,6 +354,15 @@ export default function VrmAvatar({
 
   // useFrame pour mettre à jour le mixer ET jouer les sons des joueurs distants
   useFrame((state, delta) => {
+    // DIAGNOSTIC GLOBAL - DÉSACTIVÉ POUR PROD
+    /*
+    if (Math.random() < 0.01) {
+         window.dispatchEvent(new CustomEvent('debug-phys', { 
+             detail: `Global: Group:${!!groupRef.current} Mixer:${!!mixer} VRM:${!!vrmRef.current}` 
+         }));
+    }
+    */
+
     if (mixer) {
       mixer.update(delta);
     }
@@ -344,11 +372,26 @@ export default function VrmAvatar({
 
     // 3. Gérer la position et la rotation
     if (groupRef.current) {
+        
+        // DEBUG DIAGNOSTIC WAITING
+        if (Math.random() < 0.01) { // 1 frame sur 100
+             window.dispatchEvent(new CustomEvent('debug-phys', { 
+                   detail: `Diag: Caps:${capsuleCollider} RB:${!!rigidBodyRef.current} Dir:${movementDirection?.lengthSq() > 0}` 
+             }));
+        }
+
       // Si physique activée (joueur local)
       if (capsuleCollider && rigidBodyRef.current && movementDirection) {
          // Déplacer le RigidBody basé sur l'input
           const speed = locomotion === 'run' ? runSpeed : walkSpeed;
           const currentVelocity = rigidBodyRef.current.linvel();
+          
+          // DEBUG PHYSIQUE MOBILE
+          if (movementDirection.lengthSq() > 0 && Math.random() < 0.05) {
+               window.dispatchEvent(new CustomEvent('debug-phys', { 
+                   detail: `RB:OK Spd:${speed} Vel:${currentVelocity.y.toFixed(2)}` 
+               }));
+          }
 
           rigidBodyRef.current.setLinvel({
             x: movementDirection.x * speed,

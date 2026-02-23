@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { RigidBody } from '@react-three/rapier';
 import { useFrame, useThree } from '@react-three/fiber';
@@ -278,6 +278,17 @@ export default function Ground({ paths = [], pathDetailTexture = null, baseTextu
       lastDistanceUpdate.current = now;
     }
   });
+
+  // Nettoyage des ressources lors du démontage
+  useEffect(() => {
+    return () => {
+      if (pathMaskTexture) pathMaskTexture.dispose();
+      if (geometries) {
+        geometries.forEach(g => g.dispose());
+      }
+      if (groundMaterial) groundMaterial.dispose();
+    };
+  }, [pathMaskTexture, geometries, groundMaterial]);
 
   return (
     <>

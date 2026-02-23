@@ -9,6 +9,7 @@ import FollowCamera from './camera/FollowCamera';
 import { MODELS, ANIMATIONS, MODEL_DIRECTION_OFFSETS } from '../utils/const';
 import { MultiplayerContext } from './multiplayer/MultiplayerContext';
 import { useEmoteContext } from '../context/EmoteContext';
+import { useControls } from '../context/ControlsContext';
 // Variable statique pour suivre si un modèle a déjà été chargé
 const modelLoaded = { current: false };
 
@@ -38,6 +39,8 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
     toggleEmoteMenu
   } = useEmoteContext();
 
+  const { cameraJoystickRef } = useControls();
+
   const {
     locomotion,
     movementDirection,
@@ -50,6 +53,16 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
 
   const keysPressed = useKeyboardController(cameraAngleRef, () => updateMovement(keysPressed), toggleEmoteMenu);
   useMouseController(setCameraAngle);
+
+  // Écouter les événements du joystick de mouvement
+  useEffect(() => {
+    const handleJoystickMove = () => {
+      // On passe keysPressed pour ne pas perdre l'état du clavier si utilisé en même temps
+      updateMovement(keysPressed);
+    };
+    window.addEventListener('joystick-move', handleJoystickMove);
+    return () => window.removeEventListener('joystick-move', handleJoystickMove);
+  }, [updateMovement, keysPressed]);
 
   useEffect(() => {
     updateCameraAngleRef();
@@ -83,7 +96,18 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
     }
   }, []); // Exécuter une seule fois
 
-  useFrame(() => {
+  useFrame((state, delta) => {
+    
+    // Gestion du Joystick Caméra (Droit)
+    if (cameraJoystickRef.current) {
+        const { x, y } = cameraJoystickRef.current;
+        if (Math.abs(x) > 0.05 || Math.abs(y) > 0.05) {
+             setCameraAngle(prev => ({
+                 horizontal: prev.horizontal - x * 2.0 * delta, 
+                 vertical: Math.max(0.1, Math.min(Math.PI / 2 - 0.1, prev.vertical + y * 2.0 * delta))
+             }));
+        }
+    }
 
     if (avatarObjectRef.current) {
       const playerPosition = new THREE.Vector3();
@@ -130,7 +154,16 @@ export default function Player({ audioListener, stepSoundBuffers, playerPosition
 
   // Ne rendre l'avatar que si le modèle a été assigné par le serveur
   if (!currentModel) {
+    // DIAGNOSTIC MOBILE: Modèle manquant
+    if (Math.random() < 0.05) {
+        window.dispatchEvent(new CustomEvent('debug-phys', { detail: 'Player: Waiting for Model...' }));
+    }
     return null; // Ou un composant de chargement
+  }
+  
+  // DIAGNOSTIC MOBILE: Modèle reçu
+  if (Math.random() < 0.01) {
+       window.dispatchEvent(new CustomEvent('debug-phys', { detail: `Player: Rendering ${currentModel}` }));
   }
 
   return (

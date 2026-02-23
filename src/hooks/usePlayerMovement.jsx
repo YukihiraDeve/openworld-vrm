@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
+import { useControls } from '../context/ControlsContext';
 
 // Intervalles pour les bruits de pas (en secondes)
 // Supprimer ces constantes d'ici, elles sont dans FootstepAudio
@@ -8,7 +9,20 @@ import { useFrame } from '@react-three/fiber';
 // const RUN_STEP_INTERVAL = 0.3;
 
 export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarRef) {
+  const { movementJoystickRef } = useControls();
   const [locomotion, setLocomotion] = useState('idle');
+  const [mobileJumpTriggered, setMobileJumpTriggered] = useState(false);
+
+  // Écouter le saut mobile
+  useEffect(() => {
+    const handleMobileJump = () => {
+        setMobileJumpTriggered(true);
+        // Reset après une frame ou court délai pour éviter les sauts multiples infinis
+        setTimeout(() => setMobileJumpTriggered(false), 100);
+    };
+    window.addEventListener('mobile-jump', handleMobileJump);
+    return () => window.removeEventListener('mobile-jump', handleMobileJump);
+  }, []);
   const [movementDirection, setMovementDirection] = useState(new THREE.Vector3(0, 0, 0));
   const [cameraAngle, setCameraAngle] = useState({ horizontal: 0, vertical: Math.PI / 8 });
   const cameraAngleRef = useRef(cameraAngle);
@@ -16,6 +30,7 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
   const lastPosition = useRef(new THREE.Vector3());
   const lastQuaternion = useRef(new THREE.Quaternion());
   const lastLocomotion = useRef(locomotion);
+  const debugUpdateCounter = useRef(0);
 
   const updateMovement = useCallback((keysPressed) => {
     const horizontalAngle = cameraAngleRef.current.horizontal;
@@ -25,28 +40,56 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
 
     const finalMoveDirection = new THREE.Vector3(0, 0, 0);
     let isMoving = false;
-    const isRunning = keysPressed.current.ShiftLeft || keysPressed.current.ShiftRight;
-    const isJumping = keysPressed.current.Space;
+    // Vérification de sécurité pour keysPressed
+    const safeKeys = keysPressed && keysPressed.current ? keysPressed.current : {};
+    
+    const isRunning = safeKeys.ShiftLeft || safeKeys.ShiftRight;
+    const isJumping = safeKeys.Space || mobileJumpTriggered;
 
-    if (keysPressed.current.KeyW) {
+    if (safeKeys.KeyW) {
       finalMoveDirection.add(cameraForward);
       isMoving = true;
     }
-    if (keysPressed.current.KeyS) {
+    if (safeKeys.KeyS) {
       finalMoveDirection.sub(cameraForward);
       isMoving = true;
     }
-    if (keysPressed.current.KeyA) {
+    if (safeKeys.KeyA) {
       finalMoveDirection.sub(cameraRight);
       isMoving = true;
     }
-    if (keysPressed.current.KeyD) {
+    if (safeKeys.KeyD) {
       finalMoveDirection.add(cameraRight);
       isMoving = true;
     }
 
+    // Gestion du Joystick
+    if (movementJoystickRef && movementJoystickRef.current) {
+        const { x, y } = movementJoystickRef.current;
+        // x = gauche/droite (-1 à 1)
+        // y = bas/haut (-1 à 1) -> y positif = avant
+        
+        // LOG DEBUG JOYSTICK
+        if (Math.abs(x) > 0.1 || Math.abs(y) > 0.1) {
+             // console.log("Joystick Input détecté:", x, y);
+             
+            // Y positif = avancer (ajouter cameraForward)
+            if (Math.abs(y) > 0.1) finalMoveDirection.add(cameraForward.clone().multiplyScalar(y));
+            // X positif = droite (ajouter cameraRight)
+            if (Math.abs(x) > 0.1) finalMoveDirection.add(cameraRight.clone().multiplyScalar(x));
+            
+            isMoving = true;
+        }
+    }
+
     if (finalMoveDirection.lengthSq() > 0) {
       finalMoveDirection.normalize();
+      // Émettre un event de debug pour l'afficher sur l'UI mobile
+      if (movementJoystickRef && movementJoystickRef.current && (Math.abs(movementJoystickRef.current.x) > 0.1 || Math.abs(movementJoystickRef.current.y) > 0.1)) {
+           window.dispatchEvent(new CustomEvent('debug-log', { 
+               detail: `Dir: X${finalMoveDirection.x.toFixed(2)} Z${finalMoveDirection.z.toFixed(2)}` 
+           }));
+      }
     }
 
     // Si l'avatar est défini et qu'une touche de saut est pressée
@@ -142,6 +185,13 @@ export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, a
         y: currentPositionVec.y,
         z: currentPositionVec.z
     };
+
+    // DEBUG: Émettre la position pour l'UI mobile (1 fois sur 10 frames pour ne pas surcharger)
+    debugUpdateCounter.current++;
+    if (debugUpdateCounter.current % 10 === 0) {
+        window.dispatchEvent(new CustomEvent('debug-pos', { detail: currentPosition }));
+    }
+
     // Cloner le quaternion pour éviter les mutations accidentelles si nécessaire
     // et s'assurer que c'est un objet simple {x, y, z, w}
     const currentQuaternion = {

@@ -2,6 +2,8 @@ import { Canvas, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Suspense, useContext, useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { Stats, PerformanceMonitor } from '@react-three/drei';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import LensFlare from './World/LensFlareEffect';
 
 import { Physics } from '@react-three/rapier';
 import Ground from './World/Ground';
@@ -11,13 +13,15 @@ import RemotePlayer from '../experience/multiplayer/RemotePlayer';
 
 import Paths, { createPaths } from './World/Paths';
 import Sky from './World/Sky';
-import Fog from './World/Fog';
 import { SOUNDS, TEXTURES } from '../utils/const';
 import BackgroundMusic from './audio/BackgroundMusic';
 import { EmoteProvider, useEmoteContext } from '../context/EmoteContext';
 import EmoteMenu from '../ui/EmoteMenu/EmoteMenu';
 // import LampPosts from './World/LampPosts'; // Commented out to remove lamp posts
 import Grass from './World/Grass';
+import FluffyTrees from './World/FluffyTrees';
+import StylizedTrees from './World/StylizedTrees';
+// import DebugTree from './World/DebugTree';
 
 // Remettre les chemins des sons ici
 const stepSoundPaths = [
@@ -37,17 +41,20 @@ const TERRAIN_CONFIG = {
 
 const GRASS_POSITION = [0, 0, 0];
 
+// Detect mobile device
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
 // Système de gestion de performance intelligent
 class PerformanceManager {
   constructor() {
     this.frameTimings = [];
     this.lastUpdate = 0;
-    this.currentQualityLevel = 1; // 0: low, 1: medium, 2: high
+    this.currentQualityLevel = isMobile ? 0 : 1; // Start lower on mobile
     this.qualityChangeCallbacks = [];
     this.adaptationSpeed = 0.1;
     this.targetFPS = 60;
-    this.minAcceptableFPS = 25; // Réduit de 30 à 25 pour être moins agressif
-    this.autoAdaptationEnabled = true; // Nouveau: permet de désactiver l'adaptation auto
+    this.minAcceptableFPS = 25;
+    this.autoAdaptationEnabled = true;
   }
 
   addQualityChangeCallback(callback) {
@@ -260,33 +267,6 @@ function SceneContent({ sunPosition, setSunPosition }) {
 
   const playerKey = useMemo(() => "local-player-" + Math.random().toString(36).substring(2, 9), []);
 
-  // Paramètres de brouillard adaptés à la qualité
-  const fogParams = useMemo(() => {
-    switch (qualityLevel) {
-      case 0:
-        return {
-          baseNear: 12,
-          baseFar: 60,
-          adaptationSpeed: 0.05,
-          dynamicFog: false // Désactiver le brouillard dynamique en basse qualité
-        };
-      case 2:
-        return {
-          baseNear: 35,
-          baseFar: 120,
-          adaptationSpeed: 0.015,
-          dynamicFog: true
-        };
-      default:
-        return {
-          baseNear: 25,
-          baseFar: 90,
-          adaptationSpeed: 0.03,
-          dynamicFog: true
-        };
-    }
-  }, [qualityLevel]);
-
   // Monitoring de performance avec throttling
   const monitorPerformance = useCallback((state, delta) => {
     const now = performance.now();
@@ -311,15 +291,12 @@ function SceneContent({ sunPosition, setSunPosition }) {
       {/* Sky optimisé */}
       <Sky
         sunPosition={[5, 12, -8]}
-        sunSize={qualityLevel === 0 ? 0.5 : 1}
+        sunSize={qualityLevel === 0 ? 1.8 : 2.6}
         sunColor='#ffffff'
         ambientIntensity={qualityLevel === 0 ? 0.5 : 0.5}
         lightIntensity={1.0}
         preset='noon'
       />
-
-      {/* Brouillard adaptatif */}
-      <Fog color="#87CEEB" {...fogParams} />
 
       {/* Rendu conditionnel des éléments selon la qualité */}
       <Suspense fallback={null}>
@@ -330,19 +307,42 @@ function SceneContent({ sunPosition, setSunPosition }) {
           amplitude={TERRAIN_CONFIG.amplitude}
         />
 
-        {/* Grass from Simple_Grass */}
+          {/* Grass from Simple_Grass */}
         <Grass
           paths={worldPaths}
           frequency={TERRAIN_CONFIG.frequency}
           amplitude={TERRAIN_CONFIG.amplitude}
           width={TERRAIN_CONFIG.size}
           height={TERRAIN_CONFIG.size}
-          maxDensity={500000} // Reduced density due to too much grass
+          qualityLevel={qualityLevel} // Pass quality level
+          maxDensity={500000} 
           position={GRASS_POSITION}
           playerRef={playerPositionRef}
           players={players}
           localPlayerId={localPlayerId}
         />
+
+        {/* Nouveaux Arbres Fluffy */}
+        <FluffyTrees
+          count={30}
+          width={TERRAIN_CONFIG.size}
+          height={TERRAIN_CONFIG.size}
+          frequency={TERRAIN_CONFIG.frequency}
+          amplitude={TERRAIN_CONFIG.amplitude}
+          paths={worldPaths}
+          scale={1.5} // Echelle ajustée pour correspondre au monde
+        />
+        {/* Arbres stylisés (tree.glb avec shaders contrastés) */}
+        <StylizedTrees
+          count={25}
+          width={TERRAIN_CONFIG.size}
+          height={TERRAIN_CONFIG.size}
+          frequency={TERRAIN_CONFIG.frequency}
+          amplitude={TERRAIN_CONFIG.amplitude}
+          paths={worldPaths}
+          scale={1.2}
+        />
+        {/* <DebugTree /> */}
 
         {/* LampPosts commented out to remove lamp posts */}
         {/* <LampPosts
@@ -418,6 +418,20 @@ function SceneContent({ sunPosition, setSunPosition }) {
           );
         })}
       </Physics>
+
+      {/* Post-processing: lens flare + bloom */}
+      {qualityLevel > 0 && (
+        <EffectComposer>
+          <LensFlare sunPosition={[5, 12, -8]} intensity={0.6} />
+          <Bloom
+            luminanceThreshold={1.0}
+            luminanceSmoothing={0.3}
+            intensity={1.5}
+            mipmapBlur
+            levels={5}
+          />
+        </EffectComposer>
+      )}
     </>
   );
 }
@@ -443,7 +457,7 @@ export default function CustomCanvas({ sunPosition, setSunPosition, children }) 
             alpha: false,
             preserveDrawingBuffer: false
           }}
-          dpr={[1, 2]} // Limiter le device pixel ratio pour les performances
+          dpr={isMobile ? [1, 1.5] : [1, 2]} // Lower DPR limit for mobile
           performance={{
             min: 0.2, // Seuil minimum de performance
             max: 1.0, // Seuil maximum

@@ -38,9 +38,10 @@ export default function RemotePlayer({ playerData, audioListener, stepSoundBuffe
       rotation={rotationData}
       scale={1}
       modelDirectionOffset={modelDirectionOffset}
-      audioListener={audioListener}
-      stepSoundBuffers={stepSoundBuffers}
+      // audioListener={audioListener} // DÉSACTIVÉ POUR TEST CRASH IOS
+      // stepSoundBuffers={stepSoundBuffers} // DÉSACTIVÉ POUR TEST CRASH IOS
       capsuleCollider={false}
+      silentLoading={true} // Ne pas bloquer l'UI du joueur local
       currentEmote={currentEmote}
       currentEmoteType={currentEmoteType}
       emoteAnimationUrl={currentEmoteType === 'animation' && currentEmote ? ANIMATIONS[currentEmote] : null}

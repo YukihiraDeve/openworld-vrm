@@ -3,7 +3,13 @@ import { io } from 'socket.io-client';
 import { MultiplayerContext } from './MultiplayerContext';
 
 // Remplacez par l'URL de votre serveur Socket.IO
-const SOCKET_SERVER_URL = 'http://localhost:3002'; 
+// Adapte automatiquement l'URL du socket en fonction de l'URL du client
+// Si on est sur localhost, utilise localhost. Si on est sur une IP (mobile), utilise cette IP.
+const getSocketUrl = () => {
+    const hostname = window.location.hostname;
+    return `http://${hostname}:3002`;
+};
+const SOCKET_SERVER_URL = getSocketUrl();
 
 export default function MultiplayerProvider({ children, initialConnectionDelay = null }) {
   const [socket, setSocket] = useState(null);

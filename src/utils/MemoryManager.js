@@ -19,7 +19,7 @@ class MemoryManager {
     this.cleanupInterval = 30000; // 30 secondes
     
     // Surveiller les performances
-    this.isLowMemory = false;
+    this.isLowMemory = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent); // Par défaut true sur mobile
     this.memoryThreshold = 0.8; // 80% de la mémoire utilisée
   }
 
