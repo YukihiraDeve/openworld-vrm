@@ -1,0 +1,145 @@
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #fdfbf7 0%, #f4efe4 100%);
+  color: #3d3a33;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  opacity: 1;
+  transition: opacity var(--fade-duration, 900ms) ease;
+  pointer-events: all;
+  user-select: none;
+}
+
+.loading-screen--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading-screen__glow {
+  position: absolute;
+  width: 70vmin;
+  height: 70vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(170, 205, 120, 0.28) 0%, rgba(253, 251, 247, 0) 68%);
+  pointer-events: none;
+}
+
+.loading-screen__runner {
+  position: relative;
+  width: min(280px, 62vw);
+  aspect-ratio: 1080 / 1235;
+}
+
+.loading-screen__runner img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 0.45s ease;
+}
+
+.loading-screen__runner img.is-active {
+  opacity: 1;
+}
+
+.loading-screen__title {
+  position: relative;
+  margin: 4px 0 6px;
+  font-size: clamp(22px, 4vw, 30px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #2f3b24;
+}
+
+.loading-screen__bar {
+  position: relative;
+  width: min(320px, 70vw);
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(61, 58, 51, 0.1);
+  overflow: hidden;
+}
+
+.loading-screen__fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7fb04a, #b6d36a);
+  transform-origin: left center;
+  transition: transform 0.5s ease;
+}
+
+.loading-screen__percent {
+  position: relative;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: #7a7466;
+}
+
+.loading-screen__tip {
+  position: relative;
+  min-height: 1.4em;
+  margin: 6px 16px 0;
+  font-size: 14px;
+  text-align: center;
+  color: #5d584c;
+  animation: loading-tip-in 0.5s ease both;
+}
+
+.loading-screen__error {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 80vw;
+  text-align: center;
+}
+
+.loading-screen__error p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #8a3b2a;
+}
+
+.loading-screen__error small {
+  color: #7a7466;
+  word-break: break-word;
+}
+
+.loading-screen__error button {
+  margin-top: 6px;
+  padding: 9px 22px;
+  border: none;
+  border-radius: 999px;
+  background: #6f9f3f;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.loading-screen__error button:hover {
+  background: #5f8c33;
+}
+
+@keyframes loading-tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

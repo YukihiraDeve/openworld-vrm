@@ -9,29 +9,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@dimforge/rapier3d": "^0.16.0",
     "@pixiv/three-vrm": "^3.4.0",
-    "@pixiv/three-vrm-springbone": "^3.4.0",
     "@react-three/drei": "^10.0.7",
     "@react-three/fiber": "^9.1.2",
-    "@react-three/postprocessing": "^3.0.4",
+    "@react-three/postprocessing": "~3.0.4",
     "@react-three/rapier": "^2.1.0",
-    "colyseus.js": "^0.16.16",
-    "cors": "^2.8.5",
-    "drei": "^2.2.21",
-    "express": "^5.1.0",
-    "leva": "^0.10.0",
+    "postprocessing": "~6.36.6",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "simplex-noise": "^4.0.3",
-    "socket.io": "^4.8.1",
+    "react-joystick-component": "^6.2.1",
     "socket.io-client": "^4.8.1",
-    "three": "^0.164.1",
-    "three-custom-shader-material": "^6.3.5",
-    "three-extend-material": "^1.0.0"
+    "three": "^0.164.1"
   },
   "devDependencies": {
-    "@colyseus/monitor": "^0.16.7",
     "@vitejs/plugin-react": "^4.4.1",
     "vite": "^6.3.4"
   }

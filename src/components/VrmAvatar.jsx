@@ -1,523 +1,711 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import * as THREE from 'three';
-import { mixamoVRMRigMap } from '../utils/const'; 
-import { RigidBody, CapsuleCollider } from '@react-three/rapier';
+import { mixamoVRMRigMap } from '../utils/const';
+import { RigidBody, CapsuleCollider, useRapier } from '@react-three/rapier';
 import FootstepAudio from './audio/FootstepAudio';
 import useEyeBlink from '../hooks/useEyeBlink';
 import useVRMExpressions from '../hooks/useVRMExpressions';
 import DirtRunParticles from './particles/DirtRunParticles';
 
-// Cache global pour les modèles déjà chargés
-const loadedModels = new Map();
-const yAxis = new THREE.Vector3(0, 1, 0); // Pré-calculer l'axe Y
-const targetQuaternion = new THREE.Quaternion(); // Réutiliser le quaternion cible
+// FileLoader conserve les données brutes, mais chaque GLTFLoader parse toujours sa
+// propre scène. Les avatars ne partagent donc ni squelette, ni managers VRM vivants.
+THREE.Cache.enabled = true;
 
-async function loadMixamoAnimation(url, vrm, animationName = 'vrmAnimation') {
+const mixamoSourcePromises = new Map();
+const yAxis = new THREE.Vector3(0, 1, 0);
+const REMOTE_POSITION_RESPONSE = 14;
+const REMOTE_ROTATION_RESPONSE = 16;
+const LOCAL_ROTATION_RESPONSE = 9.75;
+const MAX_INTERPOLATION_DELTA = 0.1;
+const STEP_PROBE_LOW = 0.18;
+const STEP_PROBE_HIGH = 0.62;
+const STEP_PROBE_LENGTH = 0.65;
+const STEP_HOP_VELOCITY = 2.6;
+const RESPAWN_HEIGHT = -25;
+const RESPAWN_POSITION = { x: 0, y: 2, z: 0 };
+const AVATAR_RIM_COLOR = new THREE.Color('#ffe6c4').multiplyScalar(0.2);
+
+// Liseré lumineux discret qui détache l'avatar du décor, sauf si le modèle définit déjà le sien
+function applyAvatarRim(material) {
+  if (!material?.isMToonMaterial || material.isOutline) return;
+  if (material.parametricRimColorFactor.getHex() !== 0) return;
+  material.parametricRimColorFactor.copy(AVATAR_RIM_COLOR);
+  material.parametricRimFresnelPowerFactor = 3.2;
+  material.parametricRimLiftFactor = 0;
+  material.rimLightingMixFactor = 1;
+}
+
+function loadMixamoSource(url) {
+  const cachedPromise = mixamoSourcePromises.get(url);
+  if (cachedPromise) return cachedPromise;
+
   const loader = new FBXLoader();
-  const asset = await loader.loadAsync(url);
-  const clip = THREE.AnimationClip.findByName(asset.animations, 'mixamo.com');
+  let sourcePromise;
 
+  sourcePromise = loader
+    .loadAsync(url)
+    .then((asset) => {
+      asset.updateMatrixWorld(true);
 
-  if (!clip) {
-    console.error(`[${animationName}] Animation "mixamo.com" non trouvée dans ${url}`);
-    return null; 
-  }
+      const clip = THREE.AnimationClip.findByName(asset.animations, 'mixamo.com');
+      if (!clip) {
+        console.error(`Animation "mixamo.com" non trouvée dans ${url}`);
+      }
+
+      return { asset, clip };
+    })
+    .catch((error) => {
+      if (mixamoSourcePromises.get(url) === sourcePromise) {
+        mixamoSourcePromises.delete(url);
+      }
+      throw error;
+    });
+
+  mixamoSourcePromises.set(url, sourcePromise);
+  return sourcePromise;
+}
+
+async function loadMixamoAnimation(
+  url,
+  vrm,
+  animationName = 'vrmAnimation',
+  isCancelled = () => false,
+) {
+  if (!url || !vrm) return null;
+
+  const { asset, clip } = await loadMixamoSource(url);
+  if (!clip || isCancelled()) return null;
+
+  vrm.scene.updateMatrixWorld(true);
 
   const tracks = [];
   const restRotationInverse = new THREE.Quaternion();
   const parentRestWorldRotation = new THREE.Quaternion();
-  const _quatA = new THREE.Quaternion();
-  const _vec3 = new THREE.Vector3();
+  const sourceQuaternion = new THREE.Quaternion();
+  const worldPosition = new THREE.Vector3();
 
   const motionHipsHeight = asset.getObjectByName('mixamorigHips')?.position.y;
-  const vrmHipsY = vrm.humanoid?.getNormalizedBoneNode('hips')?.getWorldPosition(_vec3).y;
-  const vrmRootY = vrm.scene.getWorldPosition(_vec3).y;
-  const vrmHipsHeight = Math.abs(vrmHipsY - vrmRootY);
-  const hipsPositionScale = vrmHipsHeight / motionHipsHeight;
+  const vrmHipsNode = vrm.humanoid?.getNormalizedBoneNode('hips');
+  const vrmHipsY = vrmHipsNode
+    ? vrmHipsNode.getWorldPosition(worldPosition).y
+    : null;
+  const vrmRootY = vrm.scene.getWorldPosition(worldPosition).y;
+  const vrmHipsHeight = vrmHipsY == null ? null : Math.abs(vrmHipsY - vrmRootY);
+  const hipsPositionScale =
+    Number.isFinite(motionHipsHeight) &&
+    Math.abs(motionHipsHeight) > Number.EPSILON &&
+    Number.isFinite(vrmHipsHeight)
+      ? vrmHipsHeight / Math.abs(motionHipsHeight)
+      : 1;
+  const isVrm0 = vrm.meta?.metaVersion === '0';
 
-  clip.tracks.forEach((track) => {
-    const trackSplitted = track.name.split('.');
-    const mixamoRigName = trackSplitted[0];
+  for (const track of clip.tracks) {
+    if (isCancelled()) return null;
+
+    const [mixamoRigName, propertyName] = track.name.split('.');
     const vrmBoneName = mixamoVRMRigMap[mixamoRigName];
+    if (!vrmBoneName || !propertyName) continue;
+
     const vrmNodeName = vrm.humanoid?.getNormalizedBoneNode(vrmBoneName)?.name;
+    if (!vrmNodeName) continue;
+
     const mixamoRigNode = asset.getObjectByName(mixamoRigName);
+    restRotationInverse.identity();
+    parentRestWorldRotation.identity();
+    mixamoRigNode?.getWorldQuaternion(restRotationInverse).invert();
+    mixamoRigNode?.parent?.getWorldQuaternion(parentRestWorldRotation);
 
-    if (vrmNodeName != null) {
-      const propertyName = trackSplitted[1];
+    if (track instanceof THREE.QuaternionKeyframeTrack) {
+      const values = new track.values.constructor(track.values.length);
 
-      mixamoRigNode?.getWorldQuaternion(restRotationInverse).invert();
-      mixamoRigNode?.parent?.getWorldQuaternion(parentRestWorldRotation);
+      for (let i = 0; i < track.values.length; i += 4) {
+        sourceQuaternion.fromArray(track.values, i);
+        sourceQuaternion
+          .premultiply(parentRestWorldRotation)
+          .multiply(restRotationInverse);
 
-      if (track instanceof THREE.QuaternionKeyframeTrack) {
-        for (let i = 0; i < track.values.length; i += 4) {
-          const flatQuaternion = track.values.slice(i, i + 4);
-          _quatA.fromArray(flatQuaternion);
-          _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
-          _quatA.toArray(flatQuaternion);
-          flatQuaternion.forEach((v, index) => {
-            track.values[index + i] = v;
-          });
+        if (isVrm0) {
+          sourceQuaternion.x *= -1;
+          sourceQuaternion.z *= -1;
         }
 
-        tracks.push(
-          new THREE.QuaternionKeyframeTrack(
-            `${vrmNodeName}.${propertyName}`,
-            track.times,
-            track.values.map((v_1, i_1) => (vrm.meta?.metaVersion === '0' && i_1 % 2 === 0 ? -v_1 : v_1))
-          )
-        );
-      } else if (track instanceof THREE.VectorKeyframeTrack) {
-        const value = track.values.map(
-          (v_2, i_2) => (vrm.meta?.metaVersion === '0' && i_2 % 3 !== 1 ? -v_2 : v_2) * hipsPositionScale
-        );
-        tracks.push(new THREE.VectorKeyframeTrack(`${vrmNodeName}.${propertyName}`, track.times, value));
+        sourceQuaternion.toArray(values, i);
       }
-    }
-  });
 
-  const convertedClip = new THREE.AnimationClip(animationName, clip.duration, tracks);
-  return convertedClip;
+      tracks.push(
+        new THREE.QuaternionKeyframeTrack(
+          `${vrmNodeName}.${propertyName}`,
+          track.times.slice(),
+          values,
+        ),
+      );
+    } else if (track instanceof THREE.VectorKeyframeTrack) {
+      const values = new track.values.constructor(track.values.length);
+
+      for (let i = 0; i < track.values.length; i += 1) {
+        const axis = i % 3;
+        const direction = isVrm0 && axis !== 1 ? -1 : 1;
+        values[i] = track.values[i] * direction * hipsPositionScale;
+      }
+
+      tracks.push(
+        new THREE.VectorKeyframeTrack(
+          `${vrmNodeName}.${propertyName}`,
+          track.times.slice(),
+          values,
+        ),
+      );
+    }
+  }
+
+  return new THREE.AnimationClip(animationName, clip.duration, tracks);
 }
 
 export default function VrmAvatar({
   vrmUrl,
-  idleAnimationUrl, 
+  idleAnimationUrl,
   walkAnimationUrl,
-  runAnimationUrl,  
-  locomotion,       
-  movementDirection, // Fourni seulement pour le joueur local
-  walkSpeed = 1.5,     
-  runSpeed = 3.5,      
+  runAnimationUrl,
+  locomotion,
+  movementDirection,
+  walkSpeed = 1.5,
+  runSpeed = 3.5,
   position = [0, 0, 0],
   scale = 1,
   rotation = null,
   modelDirectionOffset = 0,
   onLoad,
-  capsuleCollider = false, // true pour le joueur local, false pour les distants
-  audioListener, 
+  capsuleCollider = false,
+  audioListener,
   stepSoundBuffers,
-  currentEmote = null, // Émote en cours
-  currentEmoteType = null, // Type d'émote ('animation' ou 'expression')
-  emoteAnimationUrl = null, // URL de l'animation d'émote
-  emoteExpression = null, // Expression faciale à afficher
+  currentEmote = null,
+  currentEmoteType = null,
+  emoteAnimationUrl = null,
+  emoteExpression = null,
   paths = null,
+  silentLoading = false,
 }) {
-  const groupRef = useRef(); // Référence au groupe contenant le modèle visuel
-  const vrmRef = useRef(); // Référence à l'instance VRM chargée
-  const rigidBodyRef = useRef(); // Référence au RigidBody (seulement si capsuleCollider=true)
-  const [mixer, setMixer] = useState(null);
-  const actionsRef = useRef({}); 
-  const currentActionRef = useRef(null); 
-  const [modelLoaded, setModelLoaded] = useState(false); // Pour le callback onLoad
-  
-  // Ref pour stocker les dernières valeurs de props pour useFrame
-  const latestPropsRef = useRef({ position, rotation });
+  const groupRef = useRef();
+  const vrmRef = useRef();
+  const rigidBodyRef = useRef();
+  const mixerRef = useRef(null);
+  const actionsRef = useRef({});
+  const currentActionRef = useRef(null);
+  const loadGenerationRef = useRef(0);
+  const emoteRequestRef = useRef(0);
+  const stuckTimeRef = useRef(0);
+  const targetQuaternionRef = useRef(new THREE.Quaternion());
+  const nextLinearVelocityRef = useRef({ x: 0, y: 0, z: 0 });
+  const remoteTargetPositionRef = useRef(new THREE.Vector3());
+  const remoteTargetQuaternionRef = useRef(new THREE.Quaternion());
+  const remoteTransformInitializedRef = useRef(false);
+  const onLoadRef = useRef(onLoad);
+  const silentLoadingRef = useRef(silentLoading);
+  const [vrmRevision, setVrmRevision] = useState(0);
+  const { world, rapier } = useRapier();
+  const stepRay = useMemo(
+    () => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }),
+    [rapier],
+  );
 
-  // Effet pour mettre à jour le ref quand les props changent
   useEffect(() => {
-    latestPropsRef.current = { position, rotation };
-  }, [position, rotation]);
+    onLoadRef.current = onLoad;
+  }, [onLoad]);
 
-  // Système de clignement d'yeux automatique toutes les 5 secondes
-  const { triggerEyeBlink, isBlinking } = useEyeBlink(vrmRef, 5000, 150, 2000);
-  
-  // Système d'expressions faciales VRM
-  const { triggerExpression, getCurrentExpression, stopExpression } = useVRMExpressions(vrmRef);
+  useEffect(() => {
+    silentLoadingRef.current = silentLoading;
+  }, [silentLoading]);
 
-  // Fonction pour charger les animations
-  const loadAnimations = async (loadedVrmInstance, animMixer) => {
-    try {
-      // Charger les trois animations de base
-      const idleClip = await loadMixamoAnimation(idleAnimationUrl, loadedVrmInstance, 'idle');
-      const walkClip = await loadMixamoAnimation(walkAnimationUrl, loadedVrmInstance, 'walk');
-      const runClip = await loadMixamoAnimation(runAnimationUrl, loadedVrmInstance, 'run');
+  useEffect(() => {
+    if (capsuleCollider) return;
 
-      // Vérifier si les clips ont été chargés correctement
-      if (idleClip) {
-        actionsRef.current.idle = animMixer.clipAction(idleClip);
-        actionsRef.current.idle.weight = 1;
-        actionsRef.current.idle.play();
-      } else {
-        console.error('Le clip Idle na pas pu être chargé ou converti.');
-      }
-
-      if (walkClip) {
-        actionsRef.current.walk = animMixer.clipAction(walkClip);
-        actionsRef.current.walk.weight = 0;
-        actionsRef.current.walk.play();
-      } else {
-        console.error('Le clip Walk na pas pu être chargé ou converti.');
-      }
-
-      if (runClip) {
-        actionsRef.current.run = animMixer.clipAction(runClip);
-        actionsRef.current.run.weight = 0;
-        actionsRef.current.run.play();
-      } else {
-        console.error('Le clip Run na pas pu être chargé ou converti.');
-      }
-
-      // Charger l'animation d'émote si fournie
-      if (emoteAnimationUrl) {
-        const emoteClip = await loadMixamoAnimation(emoteAnimationUrl, loadedVrmInstance, 'emote');
-        if (emoteClip) {
-          actionsRef.current.emote = animMixer.clipAction(emoteClip);
-          actionsRef.current.emote.weight = 0;
-          actionsRef.current.emote.setLoop(THREE.LoopOnce); // Les émotes ne bouclent pas
-          actionsRef.current.emote.clampWhenFinished = true; // Garder la dernière frame
-          actionsRef.current.emote.play();
-        } else {
-          console.error('Le clip Emote na pas pu être chargé ou converti.');
-        }
-      }
-
-      // Initialiser l'action courante si idle existe
-      if (actionsRef.current.idle) {
-        currentActionRef.current = actionsRef.current.idle; // Définit l'action initiale
-      } else if (actionsRef.current.walk) {
-        actionsRef.current.walk.weight = 1;
-        currentActionRef.current = actionsRef.current.walk;
-      } else if (actionsRef.current.run) {
-        actionsRef.current.run.weight = 1;
-        currentActionRef.current = actionsRef.current.run;
-      } else {
-        console.error('Aucune animation na pu être initialisée.');
-      }
-    } catch (error) {
-      console.error("Erreur lors du chargement des animations:", error);
+    if (
+      Array.isArray(position) &&
+      position.length === 3 &&
+      position.every(Number.isFinite)
+    ) {
+      remoteTargetPositionRef.current.fromArray(position);
     }
-  };
 
-  // Effet pour charger le modèle VRM et les animations
+    if (
+      rotation &&
+      Number.isFinite(rotation.x) &&
+      Number.isFinite(rotation.y) &&
+      Number.isFinite(rotation.z) &&
+      Number.isFinite(rotation.w)
+    ) {
+      remoteTargetQuaternionRef.current
+        .set(rotation.x, rotation.y, rotation.z, rotation.w)
+        .normalize();
+    }
+  }, [capsuleCollider, position, rotation]);
+
   useEffect(() => {
-    let vrmSceneAddedToGroup = false; // Indicateur pour savoir si la scène a été ajoutée
+    remoteTransformInitializedRef.current = false;
+  }, [capsuleCollider]);
+
+  useEyeBlink(vrmRef);
+
+  const { triggerExpression, stopExpression } = useVRMExpressions(vrmRef);
+
+  useEffect(() => {
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+
+    let cancelled = false;
+    let loadedScene = null;
+    let loadedVrmInstance = null;
+    let ownedGroup = null;
+    let animMixer = null;
+    let ownedActions = null;
+    let sceneAttached = false;
+    let sceneDisposed = false;
+
+    const isCancelled = () =>
+      cancelled || loadGenerationRef.current !== generation;
+
+    const dispatchLoadingEvent = (eventName, detail) => {
+      if (
+        typeof window !== 'undefined' &&
+        !silentLoadingRef.current
+      ) {
+        window.dispatchEvent(new CustomEvent(eventName, { detail }));
+      }
+    };
+
+    const releaseOwnedResources = () => {
+      const scene = loadedVrmInstance?.scene ?? loadedScene;
+
+      if (animMixer) {
+        animMixer.stopAllAction();
+        if (scene) animMixer.uncacheRoot(scene);
+      }
+
+      if (actionsRef.current === ownedActions) {
+        actionsRef.current = {};
+        currentActionRef.current = null;
+      }
+
+      if (mixerRef.current === animMixer) {
+        mixerRef.current = null;
+      }
+
+      if (
+        loadedVrmInstance &&
+        vrmRef.current === loadedVrmInstance
+      ) {
+        stopExpression();
+        vrmRef.current = null;
+      }
+
+      if (sceneAttached && ownedGroup && scene?.parent === ownedGroup) {
+        ownedGroup.remove(scene);
+      }
+      sceneAttached = false;
+
+      if (ownedGroup?.rigidBodyRef === rigidBodyRef) {
+        delete ownedGroup.rigidBodyRef;
+      }
+
+      if (scene && !sceneDisposed) {
+        VRMUtils.deepDispose(scene);
+        sceneDisposed = true;
+      }
+
+      animMixer = null;
+      loadedVrmInstance = null;
+      loadedScene = null;
+      ownedActions = null;
+      ownedGroup = null;
+    };
+
+    const loadBaseClip = async (url, name) => {
+      try {
+        return await loadMixamoAnimation(
+          url,
+          loadedVrmInstance,
+          name,
+          isCancelled,
+        );
+      } catch (error) {
+        if (!isCancelled()) {
+          console.error(`Erreur lors du chargement de l'animation ${name}:`, error);
+        }
+        return null;
+      }
+    };
 
     const loadVrm = async () => {
-      // Vérifier si le modèle est en cache
-    if (loadedModels.has(vrmUrl)) {
-    
-      const cachedVrm = loadedModels.get(vrmUrl);
-      vrmRef.current = cachedVrm;
-      
-        if (groupRef.current && !groupRef.current.children.includes(cachedVrm.scene)) {
-        groupRef.current.add(cachedVrm.scene);
-             vrmSceneAddedToGroup = true;
-      }
-      
-      const animMixer = new THREE.AnimationMixer(cachedVrm.scene);
-      setMixer(animMixer);
-        await loadAnimations(cachedVrm, animMixer);
-      
-      if (onLoad && !modelLoaded) {
-           groupRef.current.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
-        onLoad(groupRef.current);
-        setModelLoaded(true);
-      }
-      return;
-    }
-
-
-    const loader = new GLTFLoader();
-    loader.register((parser) => new VRMLoaderPlugin(parser));
-
       try {
+        const loader = new GLTFLoader();
+        loader.register((parser) => new VRMLoaderPlugin(parser));
+
         const gltf = await loader.loadAsync(vrmUrl);
-      if (!groupRef.current) {
-      
-        return;
-      }
+        loadedScene = gltf.scene;
+        loadedVrmInstance = gltf.userData.vrm;
 
-      VRMUtils.removeUnnecessaryJoints(gltf.scene);
-        const loadedVrmInstance = gltf.userData.vrm;
-      vrmRef.current = loadedVrmInstance;
+        if (!loadedVrmInstance) {
+          throw new Error(`Le fichier ${vrmUrl} ne contient pas de VRM valide.`);
+        }
 
-      loadedVrmInstance.scene.traverse((object) => {
-        if (object.isMesh) {
+        if (isCancelled()) {
+          releaseOwnedResources();
+          return;
+        }
+
+        // Ordre volontairement conservateur : réduire les buffers, mutualiser les
+        // squelettes, puis ne garder que les morphs réellement pilotés par le VRM.
+        VRMUtils.removeUnnecessaryVertices(loadedVrmInstance.scene);
+        VRMUtils.combineSkeletons(loadedVrmInstance.scene);
+        VRMUtils.combineMorphs(loadedVrmInstance);
+
+        loadedVrmInstance.scene.traverse((object) => {
+          if (!object.isMesh) return;
           object.castShadow = true;
           object.receiveShadow = true;
-          object.frustumCulled = false;
-        }
-      });
+          // Les bounds statiques d'un SkinnedMesh ne suivent pas toujours les
+          // animations : les culler peut faire disparaître des membres à l'écran.
+          object.frustumCulled = !object.isSkinnedMesh;
+          if (Array.isArray(object.material)) object.material.forEach(applyAvatarRim);
+          else applyAvatarRim(object.material);
+        });
 
-        if (groupRef.current) {
-      groupRef.current.add(loadedVrmInstance.scene);
-            vrmSceneAddedToGroup = true;
+        if (isCancelled() || !groupRef.current) {
+          releaseOwnedResources();
+          return;
         }
-      
-        loadedModels.set(vrmUrl, loadedVrmInstance); // Mettre en cache
-      
-      const animMixer = new THREE.AnimationMixer(loadedVrmInstance.scene);
-      setMixer(animMixer);
-      await loadAnimations(loadedVrmInstance, animMixer);
-      
-      if (onLoad && !modelLoaded) {
-           groupRef.current.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
-        onLoad(groupRef.current);
-        setModelLoaded(true);
-      }
+
+        ownedGroup = groupRef.current;
+        ownedGroup.add(loadedVrmInstance.scene);
+        sceneAttached = true;
+        vrmRef.current = loadedVrmInstance;
+
+        animMixer = new THREE.AnimationMixer(loadedVrmInstance.scene);
+        mixerRef.current = animMixer;
+
+        const [idleClip, walkClip, runClip] = await Promise.all([
+          loadBaseClip(idleAnimationUrl, 'idle'),
+          loadBaseClip(walkAnimationUrl, 'walk'),
+          loadBaseClip(runAnimationUrl, 'run'),
+        ]);
+
+        if (isCancelled()) return;
+
+        const nextActions = {};
+        if (idleClip) nextActions.idle = animMixer.clipAction(idleClip);
+        if (walkClip) nextActions.walk = animMixer.clipAction(walkClip);
+        if (runClip) nextActions.run = animMixer.clipAction(runClip);
+
+        ownedActions = nextActions;
+        actionsRef.current = nextActions;
+
+        const initialAction =
+          nextActions.idle ?? nextActions.walk ?? nextActions.run ?? null;
+
+        if (initialAction) {
+          initialAction.reset().setEffectiveWeight(1).play();
+          currentActionRef.current = initialAction;
+        } else {
+          currentActionRef.current = null;
+          console.error('Aucune animation na pu être initialisée.');
+        }
+
+        if (isCancelled()) return;
+
+        ownedGroup.rigidBodyRef = capsuleCollider ? rigidBodyRef : null;
+        onLoadRef.current?.(ownedGroup);
+
+        if (isCancelled()) return;
+
+        setVrmRevision((revision) => revision + 1);
+        dispatchLoadingEvent('vrm-loading-success');
       } catch (error) {
-      console.error("Erreur de chargement VRM:", error);
+        if (isCancelled()) return;
+
+        console.error('Erreur de chargement VRM:', error);
+        releaseOwnedResources();
+        dispatchLoadingEvent('vrm-loading-error', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     };
 
-    if (vrmUrl) { // Ne charger que si vrmUrl est fourni
-        loadVrm();
+    if (vrmUrl) {
+      dispatchLoadingEvent('vrm-loading-start');
+      void loadVrm();
     }
 
-    // Cleanup lors du démontage
     return () => {
-       if (vrmSceneAddedToGroup && groupRef.current && vrmRef.current?.scene) {
-         // Essayer de retirer la scène seulement si elle existe toujours dans le groupe
-         if (groupRef.current.children.includes(vrmRef.current.scene)) {
-             groupRef.current.remove(vrmRef.current.scene);
-         }
-       }
-      if (mixer) {
-        mixer.stopAllAction();
-        // Optionnel: supprimer les clips et le mixer pour libérer la mémoire si nécessaire
-        // Object.values(actionsRef.current).forEach(action => mixer.uncacheAction(action.getClip()));
-        // setMixer(null); // Déplacé après la boucle
-      }
-      setMixer(null); // Assurer la réinitialisation
-      // Réinitialiser les refs d'action pour éviter les problèmes au rechargement
-      actionsRef.current = {};
-      currentActionRef.current = null;
+      cancelled = true;
+      emoteRequestRef.current += 1;
+      releaseOwnedResources();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vrmUrl, onLoad, capsuleCollider]); // Dépendances correctes
+  }, [
+    vrmUrl,
+    idleAnimationUrl,
+    walkAnimationUrl,
+    runAnimationUrl,
+    capsuleCollider,
+    stopExpression,
+  ]);
 
-  // Effet pour charger/recharger l'animation d'émote
   useEffect(() => {
-    if (!mixer || !vrmRef.current || !emoteAnimationUrl) return;
+    const animMixer = mixerRef.current;
+    const loadedVrmInstance = vrmRef.current;
+    const requestId = emoteRequestRef.current + 1;
+    emoteRequestRef.current = requestId;
+    let cancelled = false;
+
+    const removeCurrentEmoteAction = () => {
+      const emoteAction = actionsRef.current.emote;
+      if (!emoteAction || !animMixer) return;
+
+      if (currentActionRef.current === emoteAction) {
+        currentActionRef.current = null;
+      }
+
+      emoteAction.stop();
+      animMixer.uncacheAction(emoteAction.getClip());
+      delete actionsRef.current.emote;
+    };
+
+    if (!animMixer || !loadedVrmInstance || !emoteAnimationUrl) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Conserver l'action terminée quand l'émote prend fin permet de la fondre
+    // proprement vers la locomotion. Elle sera libérée au prochain changement.
+    removeCurrentEmoteAction();
 
     const loadEmoteAnimation = async () => {
       try {
-        // Supprimer l'ancienne animation d'émote si elle existe
-        if (actionsRef.current.emote) {
-          actionsRef.current.emote.stop();
-          mixer.uncacheAction(actionsRef.current.emote.getClip());
-          delete actionsRef.current.emote;
+        const emoteClip = await loadMixamoAnimation(
+          emoteAnimationUrl,
+          loadedVrmInstance,
+          'emote',
+          () =>
+            cancelled ||
+            emoteRequestRef.current !== requestId ||
+            mixerRef.current !== animMixer ||
+            vrmRef.current !== loadedVrmInstance,
+        );
+
+        if (
+          !emoteClip ||
+          cancelled ||
+          emoteRequestRef.current !== requestId ||
+          mixerRef.current !== animMixer ||
+          vrmRef.current !== loadedVrmInstance
+        ) {
+          return;
         }
 
-        // Charger la nouvelle animation d'émote
-        const emoteClip = await loadMixamoAnimation(emoteAnimationUrl, vrmRef.current, 'emote');
-        if (emoteClip) {
-          actionsRef.current.emote = mixer.clipAction(emoteClip);
-          actionsRef.current.emote.weight = 0;
-          actionsRef.current.emote.setLoop(THREE.LoopOnce);
-          actionsRef.current.emote.clampWhenFinished = true;
-          actionsRef.current.emote.play();
-        }
+        const emoteAction = animMixer.clipAction(emoteClip);
+        emoteAction.setEffectiveWeight(0);
+        emoteAction.setLoop(THREE.LoopOnce, 1);
+        emoteAction.clampWhenFinished = true;
+        actionsRef.current.emote = emoteAction;
       } catch (error) {
-        console.error("Erreur lors du chargement de l'animation d'émote:", error);
+        if (!cancelled && emoteRequestRef.current === requestId) {
+          console.error(
+            "Erreur lors du chargement de l'animation d'émote:",
+            error,
+          );
+        }
       }
     };
 
-    loadEmoteAnimation();
-  }, [emoteAnimationUrl, mixer]);
+    void loadEmoteAnimation();
 
-  // Effet pour gérer les expressions faciales
+    return () => {
+      cancelled = true;
+    };
+  }, [emoteAnimationUrl, vrmRevision]);
+
   useEffect(() => {
     if (!vrmRef.current) return;
 
     if (emoteExpression && currentEmoteType === 'expression') {
-      // Déclencher l'expression faciale
       triggerExpression(emoteExpression, 1.0, 3000);
     } else if (!emoteExpression && currentEmoteType !== 'animation') {
-      // Arrêter l'expression si pas d'émote d'expression active
       stopExpression();
     }
-  }, [emoteExpression, currentEmoteType, triggerExpression, stopExpression]);
+  }, [
+    emoteExpression,
+    currentEmoteType,
+    triggerExpression,
+    stopExpression,
+    vrmRevision,
+  ]);
 
-  // useFrame pour mettre à jour le mixer ET jouer les sons des joueurs distants
-  useFrame((state, delta) => {
-    if (mixer) {
-      mixer.update(delta);
-    }
-    if (vrmRef.current) {
-      vrmRef.current.update(delta);
-    }
+  useFrame((_, delta) => {
+    const animMixer = mixerRef.current;
+    const loadedVrmInstance = vrmRef.current;
+    const group = groupRef.current;
 
-    // 3. Gérer la position et la rotation
-    if (groupRef.current) {
-      // Si physique activée (joueur local)
+    animMixer?.update(delta);
+    loadedVrmInstance?.update(delta);
+
+    if (group) {
       if (capsuleCollider && rigidBodyRef.current && movementDirection) {
-         // Déplacer le RigidBody basé sur l'input
-          const speed = locomotion === 'run' ? runSpeed : walkSpeed;
-          const currentVelocity = rigidBodyRef.current.linvel();
+        const rigidBody = rigidBodyRef.current;
+        const speed = locomotion === 'run' ? runSpeed : walkSpeed;
+        const hasMovement = movementDirection.lengthSq() > 0;
+        const currentVelocity = rigidBody.linvel();
+        const nextVelocity = nextLinearVelocityRef.current;
 
-          rigidBodyRef.current.setLinvel({
-            x: movementDirection.x * speed,
-            y: currentVelocity.y, // Conserver la vitesse verticale (saut, gravité)
-            z: movementDirection.z * speed
-          }, true); // auto-wake
+        nextVelocity.x = hasMovement ? movementDirection.x * speed : 0;
+        nextVelocity.y = currentVelocity.y;
+        nextVelocity.z = hasMovement ? movementDirection.z * speed : 0;
+        rigidBody.setLinvel(nextVelocity, true);
 
-          // Arrêter le mouvement horizontal si pas d'input
-          if (movementDirection.lengthSq() === 0) {
-              rigidBodyRef.current.setLinvel({ x: 0, y: currentVelocity.y, z: 0 }, true);
-          }
-
-          // Calculer la rotation du groupe visuel (joueur local)
-          if (movementDirection.lengthSq() > 0) {
-              const angle = Math.atan2(movementDirection.x, movementDirection.z);
-              targetQuaternion.setFromAxisAngle(yAxis, angle + modelDirectionOffset);
-               groupRef.current.quaternion.slerp(targetQuaternion, 0.15); // Rotation plus fluide
-          }
-
-      }
-      // Si physique désactivée (joueur distant)
-      else if (!capsuleCollider && groupRef.current) {
-         // Lire les dernières props depuis le ref
-        const currentPos = latestPropsRef.current.position;
-        const currentRot = latestPropsRef.current.rotation;
-
-    
-
-        // Mettre à jour la position directement depuis les valeurs du ref
-        if (Array.isArray(currentPos) && currentPos.length === 3) {
-          groupRef.current.position.set(currentPos[0], currentPos[1], currentPos[2]);
+        if (hasMovement) {
+          const angle = Math.atan2(movementDirection.x, movementDirection.z);
+          targetQuaternionRef.current.setFromAxisAngle(
+            yAxis,
+            angle + modelDirectionOffset,
+          );
+          const rotationAlpha =
+            1 -
+            Math.exp(
+              -LOCAL_ROTATION_RESPONSE *
+                Math.min(delta, MAX_INTERPOLATION_DELTA),
+            );
+          group.quaternion.slerp(targetQuaternionRef.current, rotationAlpha);
         }
-        // Mettre à jour la rotation directement depuis les valeurs du ref
-        if (currentRot) {
-          groupRef.current.quaternion.set(currentRot.x, currentRot.y, currentRot.z, currentRot.w);
+
+        const horizontalSpeed = Math.hypot(
+          currentVelocity.x,
+          currentVelocity.z,
+        );
+        const isBlocked =
+          hasMovement &&
+          horizontalSpeed < speed * 0.3 &&
+          Math.abs(currentVelocity.y) < 0.3;
+
+        // Aide à la montée des marches : uniquement si l'obstacle est bas (rayon genou touché,
+        // rayon taille libre), ce qui empêche d'escalader les murs et les troncs.
+        if (isBlocked) {
+          stuckTimeRef.current += delta;
+          if (stuckTimeRef.current > 0.12) {
+            const origin = rigidBody.translation();
+            const probe = (height) => {
+              stepRay.origin.x = origin.x;
+              stepRay.origin.y = origin.y + height;
+              stepRay.origin.z = origin.z;
+              stepRay.dir.x = movementDirection.x;
+              stepRay.dir.y = 0;
+              stepRay.dir.z = movementDirection.z;
+              return world.castRay(
+                stepRay,
+                STEP_PROBE_LENGTH,
+                true,
+                rapier.QueryFilterFlags.EXCLUDE_SENSORS,
+                undefined,
+                undefined,
+                rigidBody,
+              );
+            };
+            if (probe(STEP_PROBE_LOW) && !probe(STEP_PROBE_HIGH)) {
+              nextVelocity.y = STEP_HOP_VELOCITY;
+              rigidBody.setLinvel(nextVelocity, true);
+            }
+            stuckTimeRef.current = 0;
+          }
+        } else {
+          stuckTimeRef.current = 0;
         }
+
+        const translation = rigidBody.translation();
+        if (translation.y < RESPAWN_HEIGHT) {
+          rigidBody.setTranslation(RESPAWN_POSITION, true);
+          rigidBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        }
+      } else if (!capsuleCollider) {
+        const interpolationDelta = Math.min(
+          delta,
+          MAX_INTERPOLATION_DELTA,
+        );
+
+        if (!remoteTransformInitializedRef.current) {
+          group.position.copy(remoteTargetPositionRef.current);
+          group.quaternion.copy(remoteTargetQuaternionRef.current);
+          remoteTransformInitializedRef.current = true;
+        } else {
+          const positionAlpha =
+            1 - Math.exp(-REMOTE_POSITION_RESPONSE * interpolationDelta);
+          const rotationAlpha =
+            1 - Math.exp(-REMOTE_ROTATION_RESPONSE * interpolationDelta);
+          group.position.lerp(remoteTargetPositionRef.current, positionAlpha);
+          group.quaternion.slerp(
+            remoteTargetQuaternionRef.current,
+            rotationAlpha,
+          );
+        }
+      } else {
+        stuckTimeRef.current = 0;
       }
     }
 
-    // 4. Gérer les transitions d'animation (commun au local et distant)
-     if (mixer && actionsRef.current) {
-        // Priorité aux émotes d'animation : si une émote d'animation est active, elle prend la priorité
-        if (currentEmote && currentEmoteType === 'animation' && actionsRef.current.emote) {
-          const emoteAction = actionsRef.current.emote;
-          const previousAction = currentActionRef.current;
+    if (animMixer) {
+      const actions = actionsRef.current;
+      const emoteAction =
+        currentEmote &&
+        currentEmoteType === 'animation' &&
+        actions.emote
+          ? actions.emote
+          : null;
+      const targetAction = emoteAction ?? (
+        locomotion ? actions[locomotion] : null
+      );
+      const previousAction = currentActionRef.current;
 
-          // Si l'émote n'est pas encore l'action courante, faire la transition
-          if (emoteAction !== previousAction) {
-            if (previousAction) {
-              emoteAction.reset().setEffectiveWeight(1).fadeIn(0.2).play();
-              previousAction.fadeOut(0.2);
-            } else {
-              emoteAction.reset().setEffectiveWeight(1).play();
-            }
-            currentActionRef.current = emoteAction;
-          }
-        } 
-        // Si émote d'expression active, utiliser la locomotion normale mais garder l'expression
-        else if (currentEmote && currentEmoteType === 'expression' && locomotion) {
-          const targetActionObject = actionsRef.current[locomotion];
-          const previousActionObject = currentActionRef.current;
-
-          if (targetActionObject && targetActionObject !== previousActionObject) {
-            if (previousActionObject) {
-              targetActionObject.reset().setEffectiveWeight(1).fadeIn(0.3).play();
-              previousActionObject.fadeOut(0.3);
-            } else {
-              targetActionObject.reset().setEffectiveWeight(1).play();
-            }
-            currentActionRef.current = targetActionObject;
-          } else if (!previousActionObject && targetActionObject) {
-            targetActionObject.reset().setEffectiveWeight(1).play();
-            currentActionRef.current = targetActionObject;
-          }
-        }
-        // Si pas d'émote active, utiliser la locomotion normale
-        else if (locomotion) {
-          const targetActionObject = actionsRef.current[locomotion];
-          const previousActionObject = currentActionRef.current;
-
-          if (targetActionObject && targetActionObject !== previousActionObject) {
-            if (previousActionObject) {
-              targetActionObject.reset().setEffectiveWeight(1).fadeIn(0.3).play();
-              previousActionObject.fadeOut(0.3);
-            } else {
-              targetActionObject.reset().setEffectiveWeight(1).play();
-            }
-            currentActionRef.current = targetActionObject;
-          } else if (!previousActionObject && targetActionObject) {
-            targetActionObject.reset().setEffectiveWeight(1).play();
-            currentActionRef.current = targetActionObject;
-          }
-        }
-     }
-
-    // 5. Système anti-blocage (seulement pour le joueur local avec physique)
-     if (capsuleCollider && groupRef.current && vrmRef.current && rigidBodyRef.current && movementDirection) {
-         const velocity = rigidBodyRef.current.linvel();
-         const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-         const isMovingInput = movementDirection.lengthSq() > 0;
-         const isStuck = isMovingInput && horizontalSpeed < 0.1 && Math.abs(velocity.y) < 0.1; // Condition de blocage
-
-         const stuckTimeRef = rigidBodyRef.current.userData?.stuckTimeRef || { current: 0 };
-         rigidBodyRef.current.userData = { ...rigidBodyRef.current.userData, stuckTimeRef };
-
-         if (isStuck) {
-             stuckTimeRef.current += delta;
-             if (stuckTimeRef.current > 0.5) {
-                
-                 rigidBodyRef.current.applyImpulse({ x: 0, y: 1.5, z: 0 }, true); // Boost vertical
-                 rigidBodyRef.current.applyImpulse({ x: movementDirection.x * 3, y: 0, z: movementDirection.z * 3 }, true); // Boost directionnel
-                 stuckTimeRef.current = 0; // Réinitialiser
-             }
-         } else {
-             stuckTimeRef.current = 0; // Réinitialiser si non bloqué
-         }
-     }
-
+      if (targetAction && targetAction !== previousAction) {
+        targetAction
+          .reset()
+          .setEffectiveWeight(1)
+          .fadeIn(emoteAction ? 0.2 : 0.3)
+          .play();
+        previousAction?.fadeOut(emoteAction ? 0.2 : 0.3);
+        currentActionRef.current = targetAction;
+      }
+    }
   });
 
-   // Effet pour prévenir le sommeil du RigidBody (seulement si physique activée)
-  useEffect(() => {
-      if (!capsuleCollider) return; // Ne rien faire si pas de physique
-
-    const interval = setInterval(() => {
-        if (rigidBodyRef.current && rigidBodyRef.current.isSleeping()) {
-          
-          rigidBodyRef.current.wakeUp();
-           rigidBodyRef.current.applyImpulse({ x: 0.0001, y: 0.0001, z: 0.0001 }, true);
-        }
-      }, 1000); // Vérifier toutes les secondes
-    
-    return () => clearInterval(interval);
-    }, [capsuleCollider]); // Dépend de capsuleCollider
-
-
-  // Rendu conditionnel
   if (capsuleCollider) {
-    // Rendu avec physique pour le joueur local
-  return (
-    <RigidBody 
-      ref={rigidBodyRef}
-        position={position} // Position initiale du corps physique
-        colliders={false} // Le collider est ajouté manuellement en dessous
+    return (
+      <RigidBody
+        ref={rigidBodyRef}
+        position={position}
+        colliders={false}
         mass={1}
-      type="dynamic"
-        enabledRotations={[false, true, false]} // Autorise rotation Y
-        lockRotations={true} // Verrouille X et Z mais pas Y (implicitement)
-        linearDamping={0.8} // Freinage linéaire
-        angularDamping={0.8} // Freinage angulaire
+        type="dynamic"
+        enabledRotations={[false, true, false]}
+        lockRotations={true}
+        linearDamping={0.8}
+        angularDamping={0.8}
         friction={0.5}
         restitution={0.1}
         gravityScale={1.5}
-        canSleep={false} // Important pour éviter les problèmes de réveil
-        ccd={true} // Continuous Collision Detection
+        canSleep={false}
+        ccd={true}
       >
-        {/* Le groupe visuel est un enfant du RigidBody */}
         <group ref={groupRef} scale={scale}>
-          {/* Le modèle VRM sera ajouté ici par useEffect */}
           {audioListener && stepSoundBuffers && (
-            <FootstepAudio 
+            <FootstepAudio
               audioListener={audioListener}
               stepSoundBuffers={stepSoundBuffers}
-              targetRef={groupRef} // Le groupe visuel contient les sons
+              targetRef={groupRef}
               locomotion={locomotion}
             />
           )}
-          {/* Particules de terre en course sur les chemins (joueur local uniquement) */}
-          {capsuleCollider && paths && (
+          {paths && (
             <DirtRunParticles
               targetRef={groupRef}
               locomotion={locomotion}
@@ -526,32 +714,26 @@ export default function VrmAvatar({
             />
           )}
         </group>
-        {/* Le collider physique est aussi un enfant du RigidBody */}
         <CapsuleCollider
-          args={[0.7, 0.3]} // [demi-hauteur partie cylindrique, rayon] - Ajuster
-          position={[0, 1.0, 0]} // Position relative au RigidBody - Ajuster Y = demi-hauteur + rayon
+          args={[0.7, 0.3]}
+          position={[0, 1.0, 0]}
+          friction={0}
+          frictionCombineRule={rapier.CoefficientCombineRule.Min}
         />
       </RigidBody>
     );
-  } else {
-    // Rendu sans physique pour les joueurs distants
-    return (
-      <group 
-        ref={groupRef} 
-        position={position} // Position initiale (sera mise à jour dans useFrame)
-        scale={scale}
-        // La rotation sera appliquée dans useFrame
-      >
-        {/* Le modèle VRM sera ajouté ici par useEffect */}
-        {audioListener && stepSoundBuffers && (
-          <FootstepAudio 
-            audioListener={audioListener}
-            stepSoundBuffers={stepSoundBuffers}
-            targetRef={groupRef} // Le groupe visuel contient les sons
-            locomotion={locomotion}
-          />
-        )}
-      </group>
-  );
   }
+
+  return (
+    <group ref={groupRef} scale={scale}>
+      {audioListener && stepSoundBuffers && (
+        <FootstepAudio
+          audioListener={audioListener}
+          stepSoundBuffers={stepSoundBuffers}
+          targetRef={groupRef}
+          locomotion={locomotion}
+        />
+      )}
+    </group>
+  );
 }

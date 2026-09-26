@@ -30,6 +30,7 @@ export const TEXTURES = {
   // Textures de terrain pour les chemins
   paths: {
     sandstone: {
+      diffuse1k: '/assets/textures/path/sandstone_cracks_diff_1k.jpg',
       diffuse: '/assets/textures/path/sandstone_cracks_diff_4k.jpg',
       normal: '/assets/textures/path/sandstone_cracks_nor_gl_4k.exr',
       roughness: '/assets/textures/path/sandstone_cracks_rough_4k.jpg',
@@ -40,6 +41,7 @@ export const TEXTURES = {
   // Textures de base pour le sol
   ground: {
     rocky: {
+      diffuse1k: '/assets/textures/dirt/rocky_terrain_02_diff_1k.jpg',
       diffuse: '/assets/textures/dirt/rocky_terrain_02_diff_4k.jpg',
       normal: '/assets/textures/dirt/rocky_terrain_02_nor_gl_4k.exr',
       roughness: '/assets/textures/dirt/rocky_terrain_02_rough_4k.exr',

@@ -1,38 +1,50 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useAudioContext } from '../../context/AudioContext';
-import './Soundbar.css'; // Nous créerons ce fichier CSS ensuite pour le style
+import './Soundbar.css';
 import soundIcon from '/assets/ui/sound/sound.png';
 
 function Soundbar() {
   const { globalVolume, setGlobalVolume } = useAudioContext();
+  const previousVolumeRef = useRef(0.5);
+  const volume = Number(globalVolume) || 0;
+  const isMuted = volume <= 0;
 
   const handleVolumeChange = (event) => {
-    setGlobalVolume(event.target.value);
-    // La logique de changement de volume se fait maintenant dans les composants audio via le contexte
+    setGlobalVolume(Number(event.target.value));
   };
 
-  // TODO: Ajouter une logique pour le mute/unmute en cliquant sur l'icône ?
-  // const toggleMute = () => { setGlobalVolume(globalVolume > 0 ? 0 : 1); };
+  const toggleMute = () => {
+    if (isMuted) {
+      setGlobalVolume(previousVolumeRef.current || 0.5);
+    } else {
+      previousVolumeRef.current = volume;
+      setGlobalVolume(0);
+    }
+  };
 
   return (
-    <div className="soundbar-container">
-      <img 
-        src={soundIcon} 
-        alt="Sound Icon" 
-        className="sound-icon" 
-        // onClick={toggleMute} // Décommenter si vous ajoutez le mute
-      />
+    <div className="soundbar-container" style={{ '--volume': `${volume * 100}%` }}>
+      <button
+        type="button"
+        className={`sound-toggle${isMuted ? ' is-muted' : ''}`}
+        onClick={toggleMute}
+        aria-label={isMuted ? 'Activer le son' : 'Couper le son'}
+        title={isMuted ? 'Activer le son' : 'Couper le son'}
+      >
+        <img src={soundIcon} alt="" draggable={false} />
+      </button>
       <input
         type="range"
         min="0"
         max="1"
         step="0.01"
-        value={globalVolume}
+        value={volume}
         onChange={handleVolumeChange}
         className="volume-slider"
+        aria-label="Volume"
       />
     </div>
   );
 }
 
-export default Soundbar; 
+export default Soundbar;

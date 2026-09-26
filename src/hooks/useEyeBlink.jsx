@@ -1,114 +1,62 @@
 import { useEffect, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
+
+const CLOSE_TIME = 0.06;
+const HOLD_TIME = 0.04;
+const OPEN_TIME = 0.15;
+const BLINK_TIME = CLOSE_TIME + HOLD_TIME + OPEN_TIME;
+const DOUBLE_BLINK_CHANCE = 0.18;
+
+const nextInterval = () => 2.2 + Math.random() * 4.4;
+
+function blinkWeight(time) {
+  if (time < CLOSE_TIME) return time / CLOSE_TIME;
+  if (time < CLOSE_TIME + HOLD_TIME) return 1;
+  const opening = Math.min((time - CLOSE_TIME - HOLD_TIME) / OPEN_TIME, 1);
+  return 1 - opening * (2 - opening);
+}
 
 /**
- * Hook personnalisé pour gérer le clignement d'yeux automatique des avatars VRM
+ * Clignement naturel des avatars VRM : fermeture rapide, réouverture plus lente,
+ * intervalles aléatoires et doubles clignements occasionnels.
  * @param {Object} vrmRef - Référence vers l'instance VRM
- * @param {number} blinkInterval - Intervalle entre les clignements en millisecondes (défaut: 5000ms)
- * @param {number} blinkDuration - Durée du clignement en millisecondes (défaut: 150ms)
- * @param {number} initialDelay - Délai avant le premier clignement en millisecondes (défaut: 2000ms)
  */
-export default function useEyeBlink(vrmRef, blinkInterval = 5000, blinkDuration = 150, initialDelay = 2000) {
-  const blinkTimerRef = useRef(null);
-  const isBlinkingRef = useRef(false);
+export default function useEyeBlink(vrmRef) {
+  const stateRef = useRef({ vrm: null, wait: 0, time: -1, wasDouble: false });
 
-  // Fonction pour contrôler les expressions faciales VRM
-  const setVRMExpression = (expressionName, value) => {
-    if (!vrmRef.current) return;
-    
-    try {
-      // Pour les nouveaux modèles VRM 1.0
-      if (vrmRef.current.expressionManager) {
-        vrmRef.current.expressionManager.setValue(expressionName, value);
-      }
-      // Pour les anciens modèles VRM 0.x
-      else if (vrmRef.current.blendShapeProxy) {
-        vrmRef.current.blendShapeProxy.setValue(expressionName, value);
-      }
-    } catch (error) {
-      // Essayer avec d'autres noms d'expressions possibles
-      try {
-        const alternatives = {
-          'blink': ['blink', 'Blink', 'eye_close', 'EyeClose', 'BLINK', 'eyeCloseLeft', 'eyeCloseRight'],
-          'happy': ['happy', 'Happy', 'smile', 'Smile', 'joy', 'Joy'],
-          'sad': ['sad', 'Sad', 'sorrow', 'Sorrow']
-        };
-        
-        if (alternatives[expressionName]) {
-          for (const alt of alternatives[expressionName]) {
-            try {
-              if (vrmRef.current.expressionManager) {
-                vrmRef.current.expressionManager.setValue(alt, value);
-                return; // Succès, sortir de la boucle
-              } else if (vrmRef.current.blendShapeProxy) {
-                vrmRef.current.blendShapeProxy.setValue(alt, value);
-                return; // Succès, sortir de la boucle
-              }
-            } catch (altError) {
-              // Continuer avec l'alternative suivante
-              continue;
-            }
-          }
-        }
-      } catch (innerError) {
-        // Ignorer silencieusement si l'expression n'est pas supportée
-        console.warn(`Expression "${expressionName}" non supportée pour ce modèle VRM`);
-      }
+  useFrame((_, delta) => {
+    const vrm = vrmRef.current;
+    const manager = vrm?.expressionManager;
+    if (!manager) return;
+
+    const state = stateRef.current;
+    if (state.vrm !== vrm) {
+      state.vrm = vrm;
+      state.time = -1;
+      state.wait = 1 + Math.random() * 2;
     }
-  };
 
-  // Fonction pour déclencher un clignement d'yeux
-  const triggerEyeBlink = () => {
-    if (!vrmRef.current || isBlinkingRef.current) return;
-    
-    isBlinkingRef.current = true;
-    
-    // Fermer les yeux (clignement)
-    setVRMExpression('blink', 1.0);
-    
-    // Ouvrir les yeux après la durée du clignement
-    setTimeout(() => {
-      setVRMExpression('blink', 0.0);
-      isBlinkingRef.current = false;
-    }, blinkDuration);
-  };
+    const step = Math.min(delta, 0.05);
+    if (state.time < 0) {
+      state.wait -= step;
+      if (state.wait > 0) return;
+      state.time = 0;
+    }
 
-  // Système de clignement d'yeux automatique
-  useEffect(() => {
-    if (!vrmRef.current) return;
-    
-    const startBlinkTimer = () => {
-      // Déclencher le premier clignement après le délai initial
-      blinkTimerRef.current = setTimeout(() => {
-        triggerEyeBlink();
-        
-        // Programmer les clignements suivants à intervalles réguliers
-        const blinkIntervalId = setInterval(() => {
-          triggerEyeBlink();
-        }, blinkInterval);
-        
-        // Stocker l'interval pour le nettoyage
-        blinkTimerRef.current = blinkIntervalId;
-      }, initialDelay);
-    };
-    
-    startBlinkTimer();
-    
-    // Nettoyage
-    return () => {
-      if (blinkTimerRef.current) {
-        clearTimeout(blinkTimerRef.current);
-        clearInterval(blinkTimerRef.current);
-      }
-      // Réinitialiser l'état
-      isBlinkingRef.current = false;
-      // S'assurer que les yeux sont ouverts
-      setVRMExpression('blink', 0.0);
-    };
-  }, [vrmRef.current, blinkInterval, blinkDuration, initialDelay]);
+    state.time += step;
+    if (state.time < BLINK_TIME) {
+      manager.setValue('blink', blinkWeight(state.time));
+      return;
+    }
 
-  // Retourner une fonction pour déclencher manuellement un clignement
-  return {
-    triggerEyeBlink,
-    isBlinking: isBlinkingRef.current
-  };
-} 
+    manager.setValue('blink', 0);
+    state.time = -1;
+    const doubleBlink = !state.wasDouble && Math.random() < DOUBLE_BLINK_CHANCE;
+    state.wasDouble = doubleBlink;
+    state.wait = doubleBlink ? 0.1 : nextInterval();
+  });
+
+  useEffect(() => () => {
+    vrmRef.current?.expressionManager?.setValue('blink', 0);
+  }, [vrmRef]);
+}

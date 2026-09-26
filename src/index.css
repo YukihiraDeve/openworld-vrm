@@ -4,6 +4,8 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden; /* Empêcher les barres de défilement */
+  background: #cfe2ee;
+  overscroll-behavior: none;
 }
 
 canvas {

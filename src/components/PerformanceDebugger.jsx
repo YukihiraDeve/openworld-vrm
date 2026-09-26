@@ -71,8 +71,16 @@ const PerformanceDebugger = ({ visible = false }) => {
       setStats(event.detail);
     };
 
+    const handleQualityLevelChanged = (event) => {
+      if (Number.isInteger(event.detail)) setQualityLevel(event.detail);
+    };
+
     window.addEventListener('performanceStats', handlePerformanceStats);
-    return () => window.removeEventListener('performanceStats', handlePerformanceStats);
+    window.addEventListener('qualityLevelChanged', handleQualityLevelChanged);
+    return () => {
+      window.removeEventListener('performanceStats', handlePerformanceStats);
+      window.removeEventListener('qualityLevelChanged', handleQualityLevelChanged);
+    };
   }, []);
 
   useEffect(() => {

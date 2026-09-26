@@ -1,9 +1,7 @@
-import { useRef, useMemo, useState, useEffect } from 'react';
 import * as THREE from 'three';
-import { useTexture } from '@react-three/drei';
-import { calculateHeight } from './Ground';
+import { calculateHeight } from './terrain';
+import { DECOR_FOOTPATHS } from './decorLayout';
 
-// Classe pour définir un chemin
 // Classe pour définir un chemin
 export class Path {
   constructor(type, points, width, material = 'dirt') {
@@ -12,6 +10,84 @@ export class Path {
     this.points = this.generateSmoothPath(points); // Points lissés
     this.width = width;
     this.material = material;
+    this.segmentGridCellSize = 4;
+    this.segments = this.points.slice(0, -1).map((start, index) => {
+      const end = this.points[index + 1];
+      const dx = end.x - start.x;
+      const dz = end.y - start.y;
+      const endX = start.x + dx;
+      const endZ = start.y + dz;
+
+      return {
+        startX: start.x,
+        startZ: start.y,
+        dx,
+        dz,
+        lengthSq: dx * dx + dz * dz,
+        minCellX: Math.floor(
+          Math.min(start.x, endX) / this.segmentGridCellSize,
+        ),
+        maxCellX: Math.floor(
+          Math.max(start.x, endX) / this.segmentGridCellSize,
+        ),
+        minCellZ: Math.floor(
+          Math.min(start.y, endZ) / this.segmentGridCellSize,
+        ),
+        maxCellZ: Math.floor(
+          Math.max(start.y, endZ) / this.segmentGridCellSize,
+        ),
+      };
+    });
+    this.segmentQueryMarks = new Uint32Array(this.segments.length);
+    this.segmentQueryStamp = 0;
+
+    this.gridMinCellX = this.segments.length > 0
+      ? Math.min(...this.segments.map((segment) => segment.minCellX))
+      : 0;
+    this.gridMaxCellX = this.segments.length > 0
+      ? Math.max(...this.segments.map((segment) => segment.maxCellX))
+      : -1;
+    this.gridMinCellZ = this.segments.length > 0
+      ? Math.min(...this.segments.map((segment) => segment.minCellZ))
+      : 0;
+    this.gridMaxCellZ = this.segments.length > 0
+      ? Math.max(...this.segments.map((segment) => segment.maxCellZ))
+      : -1;
+    this.gridRowCount = Math.max(
+      this.gridMaxCellZ - this.gridMinCellZ + 1,
+      0,
+    );
+    const gridColumnCount = Math.max(
+      this.gridMaxCellX - this.gridMinCellX + 1,
+      0,
+    );
+    this.segmentGrid = new Array(gridColumnCount * this.gridRowCount);
+
+    this.segments.forEach((segment, index) => {
+      for (
+        let cellX = segment.minCellX;
+        cellX <= segment.maxCellX;
+        cellX++
+      ) {
+        const columnOffset =
+          (cellX - this.gridMinCellX) * this.gridRowCount;
+
+        for (
+          let cellZ = segment.minCellZ;
+          cellZ <= segment.maxCellZ;
+          cellZ++
+        ) {
+          const gridIndex =
+            columnOffset + cellZ - this.gridMinCellZ;
+          const indices = this.segmentGrid[gridIndex];
+          if (indices) {
+            indices.push(index);
+          } else {
+            this.segmentGrid[gridIndex] = [index];
+          }
+        }
+      }
+    });
   }
 
   // Génère un chemin lissé avec des courbes de Catmull-Rom pour des transitions ultra-fluides
@@ -91,56 +167,95 @@ export class Path {
 
   // Vérifie si un point (x, z) est sur ce chemin
   isOnPath(x, z, margin = 0) {
-    const point = new THREE.Vector2(x, z);
     const effectiveWidth = this.width + margin;
+    const maxDistanceSq = (effectiveWidth * effectiveWidth) / 4;
+    return this.getNearbyMinDistanceSq(x, z, effectiveWidth / 2) <= maxDistanceSq;
+  }
 
-    // Pour chaque segment du chemin lissé
-    for (let i = 0; i < this.points.length - 1; i++) {
-      const start = this.points[i];
-      const end = this.points[i + 1];
+  getNearbyMinDistanceSq(x, z, radius) {
+    const cellSize = this.segmentGridCellSize;
+    const minCellX = Math.max(
+      Math.floor((x - radius) / cellSize),
+      this.gridMinCellX,
+    );
+    const maxCellX = Math.min(
+      Math.floor((x + radius) / cellSize),
+      this.gridMaxCellX,
+    );
+    const minCellZ = Math.max(
+      Math.floor((z - radius) / cellSize),
+      this.gridMinCellZ,
+    );
+    const maxCellZ = Math.min(
+      Math.floor((z + radius) / cellSize),
+      this.gridMaxCellZ,
+    );
+    let minDistanceSq = Infinity;
 
-      // Calculer la distance du point au segment de ligne
-      const distance = this.distancePointToLineSegment(point, start, end);
+    if (minCellX > maxCellX || minCellZ > maxCellZ) {
+      return minDistanceSq;
+    }
 
-      if (distance <= effectiveWidth / 2) {
-        return true;
+    this.segmentQueryStamp = (this.segmentQueryStamp + 1) >>> 0;
+    if (this.segmentQueryStamp === 0) {
+      this.segmentQueryMarks.fill(0);
+      this.segmentQueryStamp = 1;
+    }
+    const queryStamp = this.segmentQueryStamp;
+
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      const columnOffset =
+        (cellX - this.gridMinCellX) * this.gridRowCount;
+
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const indices = this.segmentGrid[
+          columnOffset + cellZ - this.gridMinCellZ
+        ];
+        if (!indices) continue;
+
+        for (let listIndex = 0; listIndex < indices.length; listIndex++) {
+          const segmentIndex = indices[listIndex];
+          if (this.segmentQueryMarks[segmentIndex] === queryStamp) continue;
+          this.segmentQueryMarks[segmentIndex] = queryStamp;
+          minDistanceSq = Math.min(
+            minDistanceSq,
+            this.distanceSqToSegment(x, z, this.segments[segmentIndex]),
+          );
+        }
       }
     }
 
-    return false;
+    return minDistanceSq;
+  }
+
+  distanceSqToSegment(x, z, segment) {
+    const pointX = x - segment.startX;
+    const pointZ = z - segment.startZ;
+    const projection = segment.lengthSq > 0
+      ? Math.min(Math.max(
+        (pointX * segment.dx + pointZ * segment.dz) / segment.lengthSq,
+        0,
+      ), 1)
+      : 0;
+    const closestX = segment.startX + projection * segment.dx;
+    const closestZ = segment.startZ + projection * segment.dz;
+    const distanceX = x - closestX;
+    const distanceZ = z - closestZ;
+
+    return distanceX * distanceX + distanceZ * distanceZ;
   }
 
   // Calcule la distance d'un point à un segment de ligne
   distancePointToLineSegment(point, lineStart, lineEnd) {
-    const A = point.x - lineStart.x;
-    const B = point.y - lineStart.y;
-    const C = lineEnd.x - lineStart.x;
-    const D = lineEnd.y - lineStart.y;
-
-    const dot = A * C + B * D;
-    const lenSq = C * C + D * D;
-    let param = -1;
-
-    if (lenSq !== 0) {
-      param = dot / lenSq;
-    }
-
-    let xx, yy;
-
-    if (param < 0) {
-      xx = lineStart.x;
-      yy = lineStart.y;
-    } else if (param > 1) {
-      xx = lineEnd.x;
-      yy = lineEnd.y;
-    } else {
-      xx = lineStart.x + param * C;
-      yy = lineStart.y + param * D;
-    }
-
-    const dx = point.x - xx;
-    const dy = point.y - yy;
-    return Math.sqrt(dx * dx + dy * dy);
+    const dx = lineEnd.x - lineStart.x;
+    const dz = lineEnd.y - lineStart.y;
+    return Math.sqrt(this.distanceSqToSegment(point.x, point.y, {
+      startX: lineStart.x,
+      startZ: lineStart.y,
+      dx,
+      dz,
+      lengthSq: dx * dx + dz * dz,
+    }));
   }
 
   // Génère la géométrie du chemin avec largeur variable
@@ -270,18 +385,13 @@ export class Path {
 
   // Calcule un facteur de transition (0 = pas d'herbe, 1 = herbe complète)
   getPathTransition(x, z, transitionDistance = 1.0) {
-    const point = new THREE.Vector2(x, z);
-    let minDistance = Infinity;
-
-    // Trouver la distance minimale à tous les segments du chemin
-    for (let i = 0; i < this.points.length - 1; i++) {
-      const start = this.points[i];
-      const end = this.points[i + 1];
-      const distance = this.distancePointToLineSegment(point, start, end);
-      minDistance = Math.min(minDistance, distance);
-    }
-
     const pathHalfWidth = this.width / 2;
+    const transitionEnd = pathHalfWidth + transitionDistance;
+    const minDistanceSq = this.getNearbyMinDistanceSq(x, z, transitionEnd);
+
+    if (minDistanceSq > transitionEnd * transitionEnd) return 1;
+
+    const minDistance = Math.sqrt(minDistanceSq);
 
     // Zone du chemin lui-même (0% d'herbe)
     if (minDistance <= pathHalfWidth) {
@@ -290,8 +400,6 @@ export class Path {
 
     // Zone de transition
     const transitionStart = pathHalfWidth;
-    const transitionEnd = pathHalfWidth + transitionDistance;
-
     if (minDistance <= transitionEnd) {
       // Transition douce avec courbe sigmoïde pour plus de naturel
       const t = (minDistance - transitionStart) / transitionDistance;
@@ -304,140 +412,31 @@ export class Path {
   }
 }
 
-// Composant principal des chemins
-export default function Paths({
-  paths = [],
-  position = [0, 0, 0],
-  frequency = 0.1,
-  amplitude = 1
-}) {
-  const groupRef = useRef();
-
-  // États pour la gestion des textures
-  const [texturesLoaded, setTexturesLoaded] = useState(false);
-  const [hasTextureError, setHasTextureError] = useState(false);
-
-  // Charger les textures avec useTexture (toujours appelé)
-  const diffuseTexture = useTexture('/assets/textures/path/sandstone_cracks_diff_4k.jpg',
-    (texture) => {
-      console.log('Texture diffuse chargée');
-      setTexturesLoaded(true);
-    },
-    (error) => {
-      console.warn('Erreur chargement texture diffuse:', error);
-      setHasTextureError(true);
-    }
-  );
-
-  const roughnessTexture = useTexture('/assets/textures/path/sandstone_cracks_rough_4k.jpg');
-  const displacementTexture = useTexture('/assets/textures/path/sandstone_cracks_disp_4k.png');
-
-  // Configuration des textures dans useEffect
-  useEffect(() => {
-    if (diffuseTexture && roughnessTexture && displacementTexture && !hasTextureError) {
-      [diffuseTexture, roughnessTexture, displacementTexture].forEach(texture => {
-        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(1, 1); // Pas de répétition automatique, géré par les UVs
-        texture.minFilter = THREE.LinearMipMapLinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        texture.anisotropy = 16;
-        texture.flipY = false;
-      });
-
-      console.log('Textures configurées avec succès');
-    }
-  }, [diffuseTexture, roughnessTexture, displacementTexture, hasTextureError]);
-
-  // Matériau PBR de grès fissuré pour tous les chemins
-  const materials = useMemo(() => {
-    const baseMaterial = {
-      map: texturesLoaded ? diffuseTexture : null,
-      normalMap: texturesLoaded ? null : null,
-      roughnessMap: texturesLoaded ? roughnessTexture : null,
-      displacementMap: texturesLoaded ? displacementTexture : null,
-      displacementScale: texturesLoaded ? 0.05 : 0, // Réduire le displacement
-      normalScale: new THREE.Vector2(0.8, 0.8), // Augmenter l'effet normal
-      // Couleur de base qui s'harmonise avec le marron de transition du sol
-      color: texturesLoaded ? new THREE.Color(0.6, 0.45, 0.3) : new THREE.Color('#8B4513'),
-      roughness: texturesLoaded ? 0.8 : 0.9,
-      metalness: 0.0,
-    };
-
-    // Debug des matériaux
-    console.log('État des textures dans materials:', {
-      texturesLoaded,
-      hasTextures: texturesLoaded,
-      diffuseMap: !!diffuseTexture,
-      normalMap: false,
-      roughnessMap: !!roughnessTexture,
-      displacementMap: !!displacementTexture
-    });
-
-    return {
-      // Tous les types utilisent le même matériau grès pour le moment
-      dirt: new THREE.MeshStandardMaterial({
-        ...baseMaterial,
-      }),
-      stone: new THREE.MeshStandardMaterial({
-        ...baseMaterial,
-        roughness: texturesLoaded ? 0.9 : 0.8,
-      }),
-      road: new THREE.MeshStandardMaterial({
-        ...baseMaterial,
-        roughness: texturesLoaded ? 0.7 : 0.7,
-      })
-    };
-  }, [texturesLoaded, diffuseTexture, roughnessTexture, displacementTexture]);
-
-  // Générer les géométries des chemins
-  const pathMeshes = useMemo(() => {
-    return paths.map((pathData, index) => {
-      const path = new Path(pathData.type, pathData.points, pathData.width, pathData.material);
-      const geometry = path.generateGeometry(frequency, amplitude);
-      const material = materials[path.material] || materials.dirt;
-
-      return {
-        key: `path-${index}`,
-        geometry,
-        material,
-        path
-      };
-    });
-  }, [paths, materials]);
-
-  return (
-    <group ref={groupRef} position={position}>
-      {/* Chemins supprimés - on garde seulement l'effet de transition sur le sol */
-      /* 
-      {pathMeshes.map(({ key, geometry, material }) => (
-        <mesh
-          key={key}
-          geometry={geometry}
-          material={material}
-          receiveShadow
-          castShadow
-        />
-      ))}
-      */ }
-    </group>
-  );
+// Le chemin visible est déjà intégré au shader du terrain. Garder ce composant
+// vide évite de charger et construire les anciens meshes PBR invisibles.
+export default function Paths() {
+  return null;
 }
 
-// Fonction utilitaire pour créer des chemins prédéfinis
+// Fonction utilitaire pour créer des chemins prédéfinis.
+// Les points extrêmes prolongent les routes dans les collines lointaines, dans l'alignement
+// des segments d'origine pour ne pas modifier leur tracé dans la zone jouable.
 export function createPaths() {
   return [
-    // Route Principale : Grande traverse d'Ouest en Est (déborde de la carte)
+    // Route Principale : Grande traverse d'Ouest en Est
     {
       type: 'road',
       material: 'dirt',
       width: 4.0,
       points: [
-        new THREE.Vector2(-60, -15), // Hors map Ouest
+        new THREE.Vector2(-150, -24),
+        new THREE.Vector2(-60, -15),
         new THREE.Vector2(-30, -12),
         new THREE.Vector2(-10, -5),  // Intersection
         new THREE.Vector2(10, 0),
         new THREE.Vector2(40, -5),
-        new THREE.Vector2(60, -10)   // Hors map Est
+        new THREE.Vector2(60, -10),
+        new THREE.Vector2(150, -32.5)
       ]
     },
     // Route Secondaire : Embranchement vers le Nord-Est
@@ -450,9 +449,17 @@ export function createPaths() {
         new THREE.Vector2(-5, 10),
         new THREE.Vector2(10, 30),
         new THREE.Vector2(30, 50),
-        new THREE.Vector2(40, 60)    // Hors map Nord-Est
+        new THREE.Vector2(40, 60),
+        new THREE.Vector2(130, 150)
       ]
-    }
+    },
+    // Sentiers vers le moulin et le puits
+    ...DECOR_FOOTPATHS.map((footpath) => ({
+      type: 'footpath',
+      material: 'dirt',
+      width: footpath.width,
+      points: footpath.points.map((point) => new THREE.Vector2(point.x, point.z)),
+    })),
   ];
 }
 
@@ -460,8 +467,7 @@ export function createPaths() {
 export function getPathTransitionFactor(x, z, paths, transitionDistance = 1.2) {
   let minTransition = 1; // Commence avec 100% d'herbe
 
-  for (const pathData of paths) {
-    const path = new Path(pathData.type, pathData.points, pathData.width, pathData.material);
+  for (const path of getPathInstances(paths)) {
     const transition = path.getPathTransition(x, z, transitionDistance);
     minTransition = Math.min(minTransition, transition);
   }
@@ -471,11 +477,33 @@ export function getPathTransitionFactor(x, z, paths, transitionDistance = 1.2) {
 
 // Fonction pour vérifier si une position est sur un chemin (utilisée par Grass)
 export function isPositionOnPath(x, z, paths, margin = 0.5) {
-  for (const pathData of paths) {
-    const path = new Path(pathData.type, pathData.points, pathData.width, pathData.material);
+  for (const path of getPathInstances(paths)) {
     if (path.isOnPath(x, z, margin)) {
       return true;
     }
   }
   return false;
-} 
+}
+
+const pathInstancesCache = new WeakMap();
+
+export function getPathInstances(paths) {
+  if (!paths || typeof paths !== 'object') return [];
+
+  let instances = pathInstancesCache.get(paths);
+  if (!instances) {
+    instances = paths.map((pathData) => (
+      pathData instanceof Path
+        ? pathData
+        : new Path(
+          pathData.type,
+          pathData.points,
+          pathData.width,
+          pathData.material,
+        )
+    ));
+    pathInstancesCache.set(paths, instances);
+  }
+
+  return instances;
+}

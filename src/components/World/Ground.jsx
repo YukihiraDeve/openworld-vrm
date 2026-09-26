@@ -1,297 +1,236 @@
-import { useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { RigidBody } from '@react-three/rapier';
-import { useFrame, useThree } from '@react-three/fiber';
+import { RigidBody, TrimeshCollider, useRapier } from '@react-three/rapier';
 import { useTexture } from '@react-three/drei';
-import { getPathTransitionFactor, Path } from './Paths';
+import { useThree } from '@react-three/fiber';
+import { calculateHeight } from './terrain';
+import { GRASS_COLORS, GROUND_COLORS, sharedUniforms } from './environment';
+import { PATH_MASK_EXTENT, getPathMask } from './pathMask';
+import { FANTASY_HOUSE_CONFIG } from './worldConfig';
+import { TEXTURES } from '../../utils/const';
 
-// Fonction partagée pour calculer la hauteur du terrain
-export function calculateHeight(x, z, frequency, amplitude) {
-  return Math.sin(x * frequency) * Math.cos(z * frequency) * amplitude;
+export { calculateHeight } from './terrain';
+
+const TERRAIN_EXTENT = 760;
+const DETAILED_EXTENT = 60;
+const COLLIDER_EXTENT = 58;
+
+// Grille régulière (1 m) au centre, puis de plus en plus espacée vers l'horizon
+function buildAxis() {
+  const coords = [];
+  for (let v = -DETAILED_EXTENT; v <= DETAILED_EXTENT; v += 1) coords.push(v);
+  let step = 1;
+  let v = DETAILED_EXTENT;
+  while (v < TERRAIN_EXTENT) {
+    step *= 1.075;
+    v = Math.min(v + step, TERRAIN_EXTENT);
+    coords.push(v);
+    coords.unshift(-v);
+  }
+  return coords;
 }
 
-// Générer une texture de masque pour les chemins avec Canvas
-function generatePathMask(paths, size = 100, resolution = 1024) {
-  const canvas = document.createElement('canvas');
-  canvas.width = resolution;
-  canvas.height = resolution;
-  const ctx = canvas.getContext('2d');
-
-  // Fond blanc (masque 1.0 = herbe)
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, resolution, resolution);
-
-  // Configurer la transformation pour matcher le monde (-size/2 à size/2)
-  ctx.translate(resolution / 2, resolution / 2);
-  const scale = resolution / size;
-  ctx.scale(scale, scale);
-
-  // Pour chaque chemin, dessiner en noir (masque 0.0 = chemin)
-  paths.forEach(pathData => {
-    // Configurer le flou pour le "fondu"
-    ctx.shadowColor = '#000000';
-    ctx.shadowBlur = 15; // Flou doux
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    // Dessiner le chemin principal
-    ctx.beginPath();
-
-    // Utiliser la logique de lissage de la classe Path ou des courbes quadratiques simples
-    // Ici on réutilise la classe Path pour garantir la cohérence
-    const pathInstance = new Path(pathData.type, pathData.points, pathData.width, pathData.material);
-    const smoothPoints = pathInstance.points; // Points lissés générés par Catmull-Rom
-
-    if (smoothPoints.length < 2) return;
-
-    ctx.moveTo(smoothPoints[0].x, smoothPoints[0].y);
-
-    // Tracer les segments entre les points lissés
-    for (let i = 1; i < smoothPoints.length; i++) {
-      ctx.lineTo(smoothPoints[i].x, smoothPoints[i].y);
+function buildGridGeometry(xs, zs) {
+  const positions = new Float32Array(xs.length * zs.length * 3);
+  let offset = 0;
+  for (let j = 0; j < zs.length; j++) {
+    for (let i = 0; i < xs.length; i++) {
+      positions[offset++] = xs[i];
+      positions[offset++] = calculateHeight(xs[i], zs[j]);
+      positions[offset++] = zs[j];
     }
+  }
 
-    // Largeur du chemin + marge de transition
-    ctx.lineWidth = pathData.width * 1.5;
-    ctx.strokeStyle = '#000000';
-    ctx.stroke();
+  const indices = [];
+  const row = xs.length;
+  for (let j = 0; j < zs.length - 1; j++) {
+    for (let i = 0; i < xs.length - 1; i++) {
+      const a = j * row + i;
+      const b = a + 1;
+      const c = a + row;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
 
-    // Deuxième passe pour le cœur du chemin (plus noir)
-    ctx.shadowBlur = 5;
-    ctx.lineWidth = pathData.width;
-    ctx.stroke();
-  });
-
-  return new THREE.CanvasTexture(canvas);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
-export default function Ground({ paths = [], pathDetailTexture = null, baseTexture = null }) {
-  const groundSize = 100; // Increased size
-  const amplitude = 1;    // Height of the hills
-  const frequency = 0.1;  // How spread out the hills are
+function buildColliderData() {
+  const axis = [];
+  for (let v = -COLLIDER_EXTENT; v <= COLLIDER_EXTENT; v += 1) axis.push(v);
+  const geometry = buildGridGeometry(axis, axis);
+  const vertices = geometry.attributes.position.array;
+  const indices = new Uint32Array(geometry.index.array);
+  geometry.dispose();
+  return { vertices, indices };
+}
 
-  const { camera } = useThree();
-  const meshRef = useRef();
+const colorUniform = (hex) => ({ value: new THREE.Color(hex) });
 
-  // Charger la texture de détail optionnelle pour les chemins
-  const detailTexture = pathDetailTexture ? useTexture(pathDetailTexture) : null;
+function createGroundMaterial({ pathMask, detailTexture, dirtTexture }) {
+  const material = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+  const { footprint } = FANTASY_HOUSE_CONFIG;
 
-  // Charger la texture de base optionnelle pour le sol
-  const groundTexture = baseTexture ? useTexture(baseTexture) : null;
+  const uniforms = {
+    uHouseCenter: { value: new THREE.Vector2(footprint.centerX, footprint.centerZ) },
+    uHouseHalf: { value: new THREE.Vector2(footprint.halfWidth, footprint.halfDepth) },
+    uPathMask: { value: pathMask },
+    uPathMaskExtent: { value: PATH_MASK_EXTENT },
+    uGroundDetail: { value: detailTexture },
+    uDirtTexture: { value: dirtTexture },
+    uNoiseTexture: sharedUniforms.uNoiseTexture,
+    uLush: colorUniform(GROUND_COLORS.lush),
+    uDry: colorUniform(GROUND_COLORS.dry),
+    uDirt: colorUniform(GROUND_COLORS.dirt),
+    uDirtDark: colorUniform(GROUND_COLORS.dirtDark),
+    uCanopyLush: colorUniform(GRASS_COLORS.lush),
+    uCanopyDeep: colorUniform(GRASS_COLORS.deep),
+    uCanopyDry: colorUniform(GRASS_COLORS.dry),
+    uForest: colorUniform('#2e4d22'),
+    uRock: colorUniform('#8a8577'),
+  };
 
-  // Configurer la texture de détail si elle existe
-  if (detailTexture) {
-    detailTexture.wrapS = detailTexture.wrapT = THREE.RepeatWrapping;
-    detailTexture.repeat.set(8, 8); // Répéter la texture pour plus de détail
-  }
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
 
-  // Configurer la texture de base si elle existe
-  if (groundTexture) {
-    groundTexture.wrapS = groundTexture.wrapT = THREE.RepeatWrapping;
-    groundTexture.repeat.set(16, 16); // Répéter la texture de base plus pour plus de finesse
-  }
-
-  // Configuration des niveaux de détail pour le terrain avec des distances plus progressives
-  const lodLevels = useMemo(() => [
-    { distance: 0, segments: 100 },    // Près: haute qualité
-    { distance: 25, segments: 80 },    // Moyenne distance: qualité moyenne
-    { distance: 50, segments: 60 },    // Distance moyenne-lointaine: qualité basse
-    { distance: 75, segments: 40 },    // Distance lointaine: qualité très basse
-  ], []);
-
-  // Référence au niveau LOD actuel et facteur de transition
-  const currentLOD = useRef(0);
-  const transitionFactor = useRef(0); // 0 = premier LOD, 1 = second LOD
-  const lastDistanceUpdate = useRef(0);
-
-  // Générer la texture de masque path une seule fois
-  const pathMaskTexture = useMemo(() => {
-    return generatePathMask(paths, groundSize);
-  }, [paths, groundSize]);
-
-
-  // La géométrie par défaut initiale (la plus haute qualité)
-  const geometries = useMemo(() => {
-    return lodLevels.map(level => {
-      const geom = new THREE.PlaneGeometry(groundSize, groundSize, level.segments, level.segments);
-      const positions = geom.attributes.position.array;
-
-      // Modifier les hauteurs des vertices
-      for (let i = 0; i < positions.length; i += 3) {
-        const x = positions[i];
-        const y = positions[i + 1];
-        const z = calculateHeight(x, y, frequency, amplitude);
-        positions[i + 2] = z;
-      }
-
-      geom.attributes.position.needsUpdate = true;
-      geom.computeVertexNormals();
-      return geom;
-    });
-  }, [groundSize, frequency, amplitude, lodLevels]);
-
-  // Matériau personnalisé avec transition de couleur via texture
-  const groundMaterial = useMemo(() => {
-    const material = new THREE.MeshStandardMaterial({
-      color: '#172F00',
-    });
-
-    material.onBeforeCompile = (shader) => {
-      // Injecter la texture de masque
-      shader.uniforms.pathMask = { value: pathMaskTexture };
-
-      if (detailTexture) {
-        shader.uniforms.detailTexture = { value: detailTexture };
-      }
-
-      if (groundTexture) {
-        shader.uniforms.groundTexture = { value: groundTexture };
-      }
-
-      shader.vertexShader = shader.vertexShader.replace(
+    shader.vertexShader = shader.vertexShader
+      .replace(
         '#include <common>',
         `#include <common>
-        varying vec3 vPosition;
-        varying vec2 vDetailUv;
-        varying vec2 vGroundUv;
-        varying vec2 vMaskUv;` // UV global pour le masque
+        varying vec3 vGroundWorld;
+        varying vec3 vGroundNormal;`,
+      )
+      .replace(
+        '#include <worldpos_vertex>',
+        `#include <worldpos_vertex>
+        vGroundWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vGroundNormal = normalize(mat3(modelMatrix) * objectNormal);`,
       );
 
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
-        vPosition = position;
-        vMaskUv = uv; // UV 0-1 standard du plan
-        vDetailUv = uv * 8.0;
-        vGroundUv = uv * 16.0;`
-      );
-
-      shader.fragmentShader = shader.fragmentShader.replace(
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
         '#include <common>',
         `#include <common>
-        varying vec3 vPosition;
-        varying vec2 vDetailUv;
-        varying vec2 vGroundUv;
-        varying vec2 vMaskUv;
-        uniform sampler2D pathMask;
-        ${detailTexture ? 'uniform sampler2D detailTexture;' : ''}
-        ${groundTexture ? 'uniform sampler2D groundTexture;' : ''}`
-      );
-
-      shader.fragmentShader = shader.fragmentShader.replace(
+        varying vec3 vGroundWorld;
+        varying vec3 vGroundNormal;
+        uniform sampler2D uPathMask;
+        uniform float uPathMaskExtent;
+        uniform sampler2D uGroundDetail;
+        uniform sampler2D uDirtTexture;
+        uniform sampler2D uNoiseTexture;
+        uniform vec3 uLush;
+        uniform vec3 uDry;
+        uniform vec3 uDirt;
+        uniform vec3 uDirtDark;
+        uniform vec3 uCanopyLush;
+        uniform vec3 uCanopyDeep;
+        uniform vec3 uCanopyDry;
+        uniform vec3 uForest;
+        uniform vec3 uRock;
+        uniform vec2 uHouseCenter;
+        uniform vec2 uHouseHalf;`,
+      )
+      .replace(
         '#include <color_fragment>',
         `#include <color_fragment>
-        
-        // Lire le masque de chemin (0 = chemin, 1 = herbe)
-        // Texture créée via Canvas, lissée par défaut
-        float transitionFactor = texture2D(pathMask, vMaskUv).r;
-        
-        // Couleurs
-        vec3 grassColorBase = vec3(0.05, 0.12, 0.02);
-        vec3 dirtColor = vec3(0.4, 0.3, 0.2);
-        
-        ${groundTexture ? `
-        vec3 groundSample = texture2D(groundTexture, vGroundUv).rgb;
-        vec3 grassColor = mix(grassColorBase, grassColorBase * groundSample * 1.8, 0.7);
-        ` : `
-        vec3 grassColor = grassColorBase;
-        `}
-        
-        ${detailTexture ? `
-        vec3 detailSample = texture2D(detailTexture, vDetailUv).rgb;
-        // La texture de détail apparaît sur le chemin
-        float detailStrength = (1.0 - transitionFactor) * 0.8;
-        vec3 texturedDirt = mix(dirtColor, dirtColor * detailSample * 1.5, detailStrength);
-        
-        vec3 finalColor = mix(texturedDirt, grassColor, transitionFactor);
-        ` : `
-        vec3 finalColor = mix(dirtColor, grassColor, transitionFactor);
-        `}
-        
-        // Variation de hauteur
-        float heightVariation = sin(vPosition.x * 0.1) * sin(vPosition.z * 0.1) * 0.1 + 1.0;
-        finalColor *= heightVariation;
-        
-        diffuseColor.rgb = finalColor;`
+        vec2 wp = vGroundWorld.xz;
+
+        float patchLarge = texture2D(uNoiseTexture, wp * 0.0125).r;
+        float patchMid = texture2D(uNoiseTexture, wp * 0.045 + 0.31).g;
+        float dryness = smoothstep(0.6, 0.86, patchLarge * 0.72 + patchMid * 0.38) * 0.85;
+        float deepness = 1.0 - smoothstep(0.25, 0.5, patchMid);
+
+        vec3 detail = texture2D(uGroundDetail, wp / 7.0).rgb;
+        float detailLuma = dot(detail, vec3(0.299, 0.587, 0.114));
+        vec3 meadow = mix(uLush, uDry, dryness) * (0.55 + detailLuma * 1.6);
+
+        float camDist = distance(wp, cameraPosition.xz);
+        vec3 canopy = mix(mix(uCanopyLush, uCanopyDeep, deepness * 0.6), uCanopyDry, dryness) * 0.78;
+        meadow = mix(meadow, canopy, smoothstep(26.0, 60.0, camDist));
+
+        float outerDist = max(abs(wp.x), abs(wp.y));
+        float forestPatch = smoothstep(0.56, 0.68, texture2D(uNoiseTexture, wp * 0.0042 + vec2(0.5, 0.2)).g);
+        meadow = mix(meadow, uForest, forestPatch * smoothstep(70.0, 130.0, outerDist) * 0.85);
+        float forestFloor = smoothstep(51.0, 58.0, outerDist) * (1.0 - smoothstep(80.0, 94.0, outerDist));
+        meadow = mix(meadow, uForest * (0.7 + detailLuma * 0.9), forestFloor * 0.65);
+        float slope = 1.0 - clamp(vGroundNormal.y, 0.0, 1.0);
+        meadow = mix(meadow, uRock * (0.8 + detailLuma * 0.6), smoothstep(0.32, 0.5, slope) * smoothstep(60.0, 90.0, outerDist));
+
+        vec2 maskUv = wp / (2.0 * uPathMaskExtent) + 0.5;
+        maskUv.y = 1.0 - maskUv.y;
+        float mask = texture2D(uPathMask, maskUv).r;
+        float edgeNoise = texture2D(uNoiseTexture, wp * 0.19).b - 0.5;
+        float pathMix = smoothstep(0.28, 0.62, mask + edgeNoise * 0.4);
+
+        vec2 houseDelta = abs(wp - uHouseCenter) - uHouseHalf;
+        float houseOutside = length(max(houseDelta, 0.0)) + min(max(houseDelta.x, houseDelta.y), 0.0);
+        pathMix = min(pathMix, smoothstep(0.0, 0.9, houseOutside + edgeNoise * 0.6));
+
+        vec3 dirtSample = texture2D(uDirtTexture, wp / 4.5).rgb;
+        float dirtLuma = dot(dirtSample, vec3(0.299, 0.587, 0.114));
+        vec3 dirt = mix(uDirtDark, uDirt, smoothstep(0.18, 0.62, dirtLuma));
+        dirt *= 0.82 + detailLuma * 0.55;
+        dirt = mix(dirt * 0.78, dirt, smoothstep(0.0, 0.35, 1.0 - mask));
+
+        diffuseColor.rgb = mix(dirt, meadow, pathMix);`,
       );
-    };
+  };
 
-    return material;
-  }, [detailTexture, groundTexture, pathMaskTexture]);
+  return material;
+}
 
-  // Déplacements de la caméra - pour éviter les mises à jour trop fréquentes
-  const lastCameraPosition = useRef(new THREE.Vector3());
-  const movementThreshold = 0.5; // Distance minimale de déplacement avant mise à jour
+const Ground = memo(function Ground({ paths = [] }) {
+  const gl = useThree((state) => state.gl);
+  const { rapier } = useRapier();
+  const [detailTexture, dirtTexture] = useTexture([
+    TEXTURES.ground.rocky.diffuse1k,
+    TEXTURES.paths.sandstone.diffuse1k,
+  ]);
 
-  // Changer de LOD en fonction de la distance avec transitions douces
-  useFrame(() => {
-    if (!meshRef.current) return;
+  useEffect(() => {
+    const anisotropy = Math.min(8, gl.capabilities.getMaxAnisotropy());
+    [detailTexture, dirtTexture].forEach((texture) => {
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = anisotropy;
+      texture.needsUpdate = true;
+    });
+  }, [detailTexture, dirtTexture, gl]);
 
-    // Vérifier si la caméra a bougé suffisamment pour recalculer le LOD
-    if (lastCameraPosition.current.distanceToSquared(camera.position) < movementThreshold) {
-      return; // Éviter les recalculs inutiles si la caméra n'a pas bougé significativement
-    }
+  const geometry = useMemo(() => {
+    const axis = buildAxis();
+    return buildGridGeometry(axis, axis);
+  }, []);
 
-    // Mettre à jour la position de la caméra mémorisée
-    lastCameraPosition.current.copy(camera.position);
+  const collider = useMemo(() => buildColliderData(), []);
+  const pathMask = useMemo(() => getPathMask(paths).texture, [paths]);
 
-    // Calculer la distance entre la caméra et le centre du terrain
-    const center = new THREE.Vector3(0, 0, 0);
-    const distanceToCamera = camera.position.distanceTo(center);
+  const material = useMemo(
+    () => createGroundMaterial({ pathMask, detailTexture, dirtTexture }),
+    [pathMask, detailTexture, dirtTexture],
+  );
 
-    // Trouver l'indice du LOD approprié
-    let targetLODIndex = 0;
-
-    for (let i = 0; i < lodLevels.length - 1; i++) {
-      if (distanceToCamera >= lodLevels[i].distance && distanceToCamera < lodLevels[i + 1].distance) {
-        targetLODIndex = i;
-
-        // Calculer un facteur de transition entre ce niveau et le suivant
-        const range = lodLevels[i + 1].distance - lodLevels[i].distance;
-        transitionFactor.current = (distanceToCamera - lodLevels[i].distance) / range;
-        break;
-      }
-    }
-
-    // Si on est au-delà du dernier seuil
-    if (distanceToCamera >= lodLevels[lodLevels.length - 1].distance) {
-      targetLODIndex = lodLevels.length - 1;
-      transitionFactor.current = 1;
-    }
-
-    // Ne changer le LOD que si nécessaire et avec un délai minimal
-    const now = performance.now();
-    const minUpdateInterval = 500; // Minimum 500ms entre changements de LOD
-
-    if (targetLODIndex !== currentLOD.current &&
-      now - lastDistanceUpdate.current > minUpdateInterval) {
-
-      // Transition douce: sauvegarder temporairement l'ancienne et la nouvelle géométrie
-      const oldGeom = meshRef.current.geometry;
-      const newGeom = geometries[targetLODIndex];
-
-      // Appliquer la nouvelle géométrie
-      meshRef.current.geometry = newGeom;
-
-      // Mise à jour des références
-      currentLOD.current = targetLODIndex;
-      lastDistanceUpdate.current = now;
-    }
-  });
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  useEffect(() => () => pathMask.dispose(), [pathMask]);
+  useEffect(() => () => material.dispose(), [material]);
 
   return (
     <>
-      <RigidBody type="fixed" colliders="trimesh">
-        {/* Visual mesh with LOD */}
-        <mesh
-          ref={meshRef}
-          geometry={geometries[0]} // Commencer avec la meilleure qualité
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0, 0]}
-          receiveShadow
-          material={groundMaterial}
+      <mesh geometry={geometry} material={material} receiveShadow />
+      <RigidBody type="fixed" colliders={false}>
+        <TrimeshCollider
+          args={[collider.vertices, collider.indices, rapier.TriMeshFlags.FIX_INTERNAL_EDGES]}
+          friction={1}
         />
       </RigidBody>
     </>
   );
-}
+});
+
+export default Ground;

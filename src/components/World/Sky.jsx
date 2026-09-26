@@ -1,212 +1,157 @@
-import React, { useMemo, useRef, useEffect } from 'react';
-import { shaderMaterial, Clouds, Cloud } from '@react-three/drei';
-import { extend, useThree, useFrame, useLoader } from '@react-three/fiber';
+import { memo, useEffect, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { Lensflare, LensflareElement } from 'three/addons/objects/Lensflare.js';
+import { ATMOSPHERE_GLSL } from './atmosphere';
+import { SKY_COLORS, WIND, sharedUniforms } from './environment';
 
-/**
- * Sky.jsx — Full environment lighting driven by the Sun
- * =====================================================
- * • Gradient dome for background.
- * • DirectionalLight + lens‑flare sprite share the **same position & colour**.
- * • Hemispheric ambient light still follows sky colours.
- *   👉   Plus de composant Lighting séparé : supprimez `Lighting.jsx` dans l'arbre.
- *
- * Presets : morning | noon | evening | night
- */
-
-// ───────── Gradient shader ─────────
-const SkyGradientMaterial = shaderMaterial(
-  { topColor: new THREE.Color('#4da4ff'), bottomColor: new THREE.Color('#cfefff') },
-  /* glsl */`
-  varying vec3 vWorldPosition;
-  void main(){
-    vec4 wp = modelMatrix * vec4(position,1.0);
-    vWorldPosition = wp.xyz;
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }`,
-  /* glsl */`
-  uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vWorldPosition;
-  void main(){ float h = normalize(vWorldPosition).y*0.5+0.5;
-    vec3 col = mix(bottomColor, topColor, pow(h,1.4));
-    gl_FragColor = vec4(col,1.0);
-  }`
-);
-extend({ SkyGradientMaterial });
-
-// ───────── Presets ─────────
-const PRESETS = {
-  morning: { topColor: '#ffbfa5', bottomColor: '#ffe9cd', sunColor: '#ffd6a5', sunPos: [-10, 5, -10], amb: 0.55 },
-  noon: { topColor: '#4da4ff', bottomColor: '#cfefff', sunColor: '#fff9c4', sunPos: [0, 10, -10], amb: 0.8 },
-  evening: { topColor: '#ff9b8e', bottomColor: '#ffd3b0', sunColor: '#ffb27d', sunPos: [10, 5, -10], amb: 0.45 },
-  night: { topColor: '#0b1130', bottomColor: '#0d1a42', sunColor: '#ffffff', sunPos: [0, -5, -10], amb: 0.2, hideSun: true }
+const glslColor = (hex) => {
+  const c = new THREE.Color(hex);
+  return `vec3(${c.r.toFixed(5)}, ${c.g.toFixed(5)}, ${c.b.toFixed(5)})`;
 };
 
-// ───────── Lens‑flare helper ─────────
-function useLensflare(sunRef, textures, enabled) {
-  const flare = React.useMemo(() => {
-    if (!enabled || !textures || textures.length < 3) return null;
-    const lf = new Lensflare();
-    lf.addElement(new LensflareElement(textures[0], 700, 0));
-    lf.addElement(new LensflareElement(textures[1], 100, 0.3));
-    lf.addElement(new LensflareElement(textures[1], 60, 0.5));
-    lf.addElement(new LensflareElement(textures[2], 120, 0.7));
-    return lf;
-  }, [textures, enabled]);
-  useEffect(() => { if (sunRef.current && flare) sunRef.current.add(flare); }, [sunRef, flare]);
-}
+const vertexShader = /* glsl */ `
+  varying vec3 vWorldPosition;
 
-// ───────── Sky component ─────────
-export default function Sky({
-  preset = 'noon', radius = 500,
-  flareTextures = [
-    '/assets/textures/sun/lensflare0.png',
-    '/assets/textures/sun/lensflare1.png',
-    '/assets/textures/sun/lensflare2.png'],
-  sunPosition,
-  sunColor,
-  ambientIntensity,
-  lightIntensity = 1.0
-}) {
-  const p = PRESETS[preset] ?? PRESETS.noon;
-  const flareTex = useLoader(THREE.TextureLoader, flareTextures);
-  const sunRef = useRef();
-  const dirLightRef = useRef();
-  useLensflare(sunRef, flareTex, !p.hideSun);
+  void main() {
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vWorldPosition = worldPosition.xyz;
+    gl_Position = projectionMatrix * viewMatrix * worldPosition;
+    gl_Position.z = gl_Position.w * 0.99999;
+  }
+`;
 
-  // Use props if provided, otherwise fallback to preset
-  const finalTopColor = preset === 'noon' ? '#87CEEB' : p.topColor; // Match Simple_Grass blue
-  const finalBottomColor = preset === 'noon' ? '#b0e2ff' : p.bottomColor;
+const fragmentShader = /* glsl */ `
+  uniform float uTime;
+  uniform sampler2D uNoiseTexture;
+  varying vec3 vWorldPosition;
 
-  const topCol = new THREE.Color(finalTopColor);
-  const groundCol = new THREE.Color(finalBottomColor);
-  const finalSunColor = new THREE.Color(sunColor || p.sunColor);
-  const finalSunPos = sunPosition || p.sunPos;
-  const finalAmbInfo = ambientIntensity !== undefined ? ambientIntensity : p.amb;
+  #include <common>
+  #include <dithering_pars_fragment>
 
-  // Position of sun
-  const sunDist = radius * 0.99;
-  const sunVec = useMemo(() => new THREE.Vector3().fromArray(finalSunPos).normalize().multiplyScalar(sunDist), [finalSunPos, sunDist]);
+  ${ATMOSPHERE_GLSL}
 
-  // Face camera
-  const { camera } = useThree();
-  useFrame(() => {
-    sunRef.current && sunRef.current.quaternion.copy(camera.quaternion);
+  const vec3 SUN_DISK = ${glslColor(SKY_COLORS.sunDisk)};
+  const vec3 CLOUD_LIT = ${glslColor(SKY_COLORS.cloudLit)};
+  const vec3 CLOUD_SHADE = ${glslColor(SKY_COLORS.cloudShade)};
+  const vec3 MOUNTAIN_FAR = ${glslColor(SKY_COLORS.mountainFar)};
+  const vec3 MOUNTAIN_NEAR = ${glslColor(SKY_COLORS.mountainNear)};
+  const vec3 SNOW = ${glslColor(SKY_COLORS.snow)};
+  const vec2 CLOUD_WIND = vec2(${WIND.direction.x.toFixed(4)}, ${WIND.direction.y.toFixed(4)});
 
-    // Exposer la référence de la lumière dans le contexte global
-    if (dirLightRef.current && !window.mainDirectionalLight) {
-      window.mainDirectionalLight = dirLightRef.current;
+  float cloudField(vec2 p) {
+    float base = texture2D(uNoiseTexture, p * 0.21).r;
+    float billow = texture2D(uNoiseTexture, p * 0.57 + vec2(0.37, 0.11)).g;
+    float detail = texture2D(uNoiseTexture, p * 1.63 + vec2(0.71, 0.29)).a;
+    return base * 0.6 + billow * 0.3 + detail * 0.13;
+  }
+
+  float ridgeHeight(vec2 circle, float scale, vec2 offset, float sharpness) {
+    float broad = texture2D(uNoiseTexture, circle * scale + offset).r;
+    float ridge = 1.0 - abs(texture2D(uNoiseTexture, circle * scale * 2.4 + offset * 1.7).b * 2.0 - 1.0);
+    return pow(clamp(broad * 0.72 + ridge * 0.34, 0.0, 1.0), sharpness);
+  }
+
+  vec3 applyMountains(vec3 color, vec3 dir) {
+    vec2 circle = normalize(dir.xz + vec2(1e-5));
+
+    float farRidge = 0.012 + 0.105 * ridgeHeight(circle, 0.42, vec2(0.21, 0.67), 1.9);
+    float farEdge = farRidge - dir.y;
+    float farAA = fwidth(dir.y) * 1.5;
+    if (farEdge > -farAA) {
+      float depth = clamp(farEdge / max(farRidge, 1e-3), 0.0, 1.0);
+      float snowLine = smoothstep(0.07, 0.1, farRidge) * (1.0 - smoothstep(0.004, 0.022, farEdge));
+      vec3 rock = mix(MOUNTAIN_FAR * 1.08, MOUNTAIN_FAR * 0.86, smoothstep(0.0, 0.6, depth));
+      vec3 mountain = mix(rock, SNOW, snowLine * 0.85);
+      mountain = mix(mountain, atmosphereColor(dir), 0.38 + 0.42 * smoothstep(0.1, 1.0, depth));
+      color = mix(color, mountain, smoothstep(-farAA, farAA, farEdge));
     }
+
+    float nearRidge = 0.004 + 0.052 * ridgeHeight(circle, 0.78, vec2(0.63, 0.12), 1.35);
+    float nearEdge = nearRidge - dir.y;
+    float nearAA = fwidth(dir.y) * 1.5;
+    if (nearEdge > -nearAA) {
+      float depth = clamp(nearEdge / max(nearRidge, 1e-3), 0.0, 1.0);
+      vec3 hills = mix(MOUNTAIN_NEAR * 1.05, MOUNTAIN_NEAR * 0.8, depth);
+      hills = mix(hills, atmosphereColor(dir), 0.3 + 0.35 * depth);
+      color = mix(color, hills, smoothstep(-nearAA, nearAA, nearEdge));
+    }
+    return color;
+  }
+
+  vec3 applyClouds(vec3 color, vec3 dir, float sunAmount) {
+    if (dir.y <= 0.0) return color;
+
+    vec2 uv = dir.xz / (dir.y + 0.16);
+    vec2 p = uv * 0.55 + CLOUD_WIND * uTime * 0.0035;
+    float field = cloudField(p);
+    float coverage = 0.5;
+    float density = smoothstep(coverage, coverage + 0.13, field);
+    if (density <= 0.0) return color;
+
+    vec2 toSun = normalize(ATMO_SUN_DIR.xz) * 0.085;
+    float fieldTowardSun = cloudField(p + toSun);
+    float light = clamp(0.64 + (field - fieldTowardSun) * 5.5, 0.0, 1.0);
+    vec3 cloud = mix(CLOUD_SHADE, CLOUD_LIT * 1.08, light);
+    cloud *= mix(1.0, 0.9, smoothstep(coverage + 0.12, coverage + 0.34, field));
+    cloud += SUN_DISK * pow(sunAmount, 9.0) * (1.0 - density * 0.7) * 0.9;
+
+    float horizon = smoothstep(0.0, 0.3, dir.y);
+    cloud = mix(atmosphereColor(dir), cloud, 0.4 + 0.6 * horizon);
+    return mix(color, cloud, density * smoothstep(0.012, 0.09, dir.y));
+  }
+
+  void main() {
+    vec3 dir = normalize(vWorldPosition - cameraPosition);
+    float sunDot = dot(dir, ATMO_SUN_DIR);
+    float sunAmount = max(sunDot, 0.0);
+
+    vec3 color = atmosphereColor(dir);
+    color += SUN_DISK * pow(sunAmount, 600.0) * 1.4;
+    color += SUN_DISK * smoothstep(0.99962, 0.99984, sunDot) * 24.0;
+
+    color = applyClouds(color, dir, sunAmount);
+    color = applyMountains(color, dir);
+
+    gl_FragColor = vec4(color, 1.0);
+
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    #include <dithering_fragment>
+  }
+`;
+
+const SkyDome = memo(function SkyDome() {
+  const meshRef = useRef();
+
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: sharedUniforms.uTime,
+          uNoiseTexture: sharedUniforms.uNoiseTexture,
+        },
+        vertexShader,
+        fragmentShader,
+        side: THREE.BackSide,
+        depthWrite: false,
+        depthTest: false,
+        fog: false,
+        dithering: true,
+      }),
+    [],
+  );
+
+  useEffect(() => () => material.dispose(), [material]);
+
+  useFrame(({ camera }) => {
+    meshRef.current?.position.copy(camera.position);
   });
 
   return (
-    <>
-      {/* Gradient dome */}
-      <mesh scale={[-1, 1, 1]} renderOrder={-1}>
-        <sphereGeometry args={[radius, 64, 32]} />
-        <skyGradientMaterial side={THREE.BackSide} topColor={topCol} bottomColor={groundCol} />
-      </mesh>
-
-      {/* Ambient light from sky colours */}
-      <hemisphereLight args={[topCol, groundCol, finalAmbInfo]} />
-
-      {/* Directional sunlight + sprite + flare */}
-      {!p.hideSun && (
-        <group position={sunVec}>
-          {/* Visible sun sprite */}
-          <sprite ref={sunRef} scale={[1, 1, 1]}>
-            <spriteMaterial attach="material" color={finalSunColor} transparent opacity={1} depthWrite={false} />
-          </sprite>
-          {/* Actual lighting */}
-          <directionalLight
-            ref={dirLightRef}
-            position={[0, 0, 0]} // already in group at sunVec
-            intensity={lightIntensity}
-            color={finalSunColor}
-            castShadow
-            shadow-mapSize-width={2048}
-            shadow-mapSize-height={2048}
-            shadow-camera-left={-50}
-            shadow-camera-right={50}
-            shadow-camera-top={50}
-            shadow-camera-bottom={-50}
-            shadow-camera-near={0.1}
-            shadow-camera-far={1000}
-            shadow-bias={-0.0001}
-          />
-        </group>
-      )}
-
-      {/* Volumetric Clouds */}
-      <Clouds material={THREE.MeshLambertMaterial} limit={1000}>
-        {/* Cluster 1: North-East - Large */}
-        <Cloud
-          seed={10}
-          bounds={[50, 15, 50]}
-          segments={60}
-          volume={25}
-          scale={15}
-          growth={10}
-          opacity={0.6}
-          position={[120, 110, -100]}
-          speed={0.1}
-          color="#ffffff"
-          fade={80}
-        />
-        {/* Cluster 2: West - Dense */}
-        <Cloud
-          seed={20}
-          bounds={[40, 20, 40]}
-          segments={50}
-          volume={20}
-          scale={18}
-          growth={8}
-          opacity={0.5}
-          position={[-150, 100, -50]}
-          speed={0.08}
-          color="#f0f0f0"
-          fade={100}
-        />
-        {/* Cluster 3: South - Scattered */}
-        <Cloud
-          seed={30}
-          bounds={[60, 20, 60]}
-          segments={40}
-          volume={30}
-          scale={20}
-          growth={12}
-          opacity={0.4}
-          position={[30, 120, 150]}
-          speed={0.05}
-          color="#e8e8e8"
-        />
-        {/* Cluster 4: Distant High */}
-        <Cloud
-          seed={40}
-          bounds={[80, 20, 80]}
-          segments={40}
-          volume={25}
-          scale={25}
-          growth={15}
-          opacity={0.3}
-          position={[-100, 160, 100]}
-          speed={0.02}
-          color="#d0d0d0"
-        />
-        {/* Cluster 5: Small low detail near horizon */}
-        <Cloud
-          seed={50}
-          bounds={[30, 10, 30]}
-          segments={30}
-          volume={15}
-          scale={12}
-          growth={6}
-          opacity={0.5}
-          position={[0, 90, -180]}
-          speed={0.12}
-          color="#ffffff"
-        />
-      </Clouds>
-    </>
+    <mesh ref={meshRef} material={material} renderOrder={-1000} frustumCulled={false}>
+      <sphereGeometry args={[900, 48, 24]} />
+    </mesh>
   );
-}
+});
+
+export default SkyDome;

@@ -1,398 +1,404 @@
-import { useRef, useMemo, useEffect, useState, memo } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { calculateHeight } from './Ground';
-import { Path } from './Paths';
+import { calculateHeight } from './terrain';
+import { getPathMask, pathEdgeValue } from './pathMask';
+import { getExclusionDensity } from './worldConfig';
+import { sampleNoise } from './noise';
+import { GRASS_COLORS, MAX_INTERACTIVE_PLAYERS, sharedUniforms } from './environment';
+import { lightsBeginWithSunCapture, normalBeginWithoutFlip } from './shaderUtils';
 
-// --- Shader Code from Simple_Grass ---
+const CHUNK_SIZE = 16;
+const BLADE_HALF_WIDTH = 0.034;
+const FADE_START = 46;
+const FADE_END = 60;
+const LOD_START = 16;
+const LOD_END = 44;
+const LOD_MIN_KEEP = 0.32;
 
-const VERTEX_SHADER_HEADER = `
-uniform float time;
-uniform float windStrength;
-uniform vec3 playerPositions[10];
-uniform int playerCount;
+// Brin effilé : 4 segments + pointe. x = demi-largeur, y = hauteur normalisée (0..1)
+function createBladeGeometry() {
+  const segments = 4;
+  const positions = [];
+  const normals = [];
+  const indices = [];
 
-attribute vec3 offset;
-attribute float scale;
-attribute float rotation;
-attribute float tilt; // For initial random tilt
+  for (let i = 0; i < segments; i++) {
+    const t = i / segments;
+    const halfWidth = BLADE_HALF_WIDTH * (1 - 0.9 * Math.pow(t, 1.3));
+    positions.push(-halfWidth, t, 0, halfWidth, t, 0);
+    normals.push(0, 0, 1, 0, 0, 1);
+  }
+  positions.push(0, 1, 0);
+  normals.push(0, 0, 1);
 
-// Simple noise function (Simplex-like)
-vec3 mod289(vec3 x) {
-  return x - floor(x * (1.0 / 289.0)) * 289.0;
+  for (let i = 0; i < segments - 1; i++) {
+    const a = i * 2;
+    indices.push(a, a + 1, a + 3, a, a + 3, a + 2);
+  }
+  const last = (segments - 1) * 2;
+  indices.push(last, last + 1, segments * 2);
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geometry.setIndex(indices);
+  return geometry;
 }
 
-vec2 mod289(vec2 x) {
-  return x - floor(x * (1.0 / 289.0)) * 289.0;
-}
+const BLADE_GEOMETRY = createBladeGeometry();
 
-vec3 permute(vec3 x) {
-  return mod289(((x*34.0)+1.0)*x);
-}
+const keepFraction = (distance) => {
+  const t = THREE.MathUtils.smoothstep(distance, LOD_START, LOD_END);
+  return THREE.MathUtils.lerp(1, LOD_MIN_KEEP, t);
+};
 
-float snoise(vec2 v) {
-  const vec4 C = vec4(0.211324865405187,  // (3.0-sqrt(3.0))/6.0
-                      0.366025403784439,  // 0.5*(sqrt(3.0)-1.0)
-                     -0.577350269189626,  // -1.0 + 2.0 * C.x
-                      0.024390243902439); // 1.0 / 41.0
-  vec2 i  = floor(v + dot(v, C.yy) );
-  vec2 x0 = v -   i + dot(i, C.xx);
-  vec2 i1;
-  i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-  vec4 x12 = x0.xyxy + C.xxzz;
-  x12.xy -= i1;
-  i = mod289(i); // Avoid truncation effects in permutation
-  vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 ))
-    + i.x + vec3(0.0, i1.x, 1.0 ));
-  vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-  m = m*m ;
-  m = m*m ;
-  vec3 x = 2.0 * fract(p * C.www) - 1.0;
-  vec3 h = abs(x) - 0.5;
-  vec3 ox = floor(x + 0.5);
-  vec3 a0 = x - ox;
-  m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
-  vec3 g;
-  g.x  = a0.x  * x0.x  + h.x  * x0.y;
-  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-  return 130.0 * dot(m, g);
-}
+const VERTEX_HEADER = /* glsl */ `
+  #define GRASS_MAX_PLAYERS ${MAX_INTERACTIVE_PLAYERS}
+  uniform float uTime;
+  uniform vec2 uWindDirection;
+  uniform float uWindStrength;
+  uniform sampler2D uNoiseTexture;
+  uniform vec3 uPlayers[GRASS_MAX_PLAYERS];
+  uniform int uPlayerCount;
+  uniform vec3 uColorBase;
+  uniform vec3 uColorLush;
+  uniform vec3 uColorDeep;
+  uniform vec3 uColorDry;
+  uniform vec3 uColorEdge;
 
+  attribute vec4 aBlade;
+  attribute vec4 aBladeData;
+  attribute vec2 aBladeTint;
 
-// Rotation matrices
-mat3 rotateY(float theta) {
-    float c = cos(theta);
-    float s = sin(theta);
-    return mat3(
-        vec3(c, 0, s),
-        vec3(0, 1, 0),
-        vec3(-s, 0, c)
-    );
-}
-
-mat3 rotateX(float theta) {
-    float c = cos(theta);
-    float s = sin(theta);
-    return mat3(
-        vec3(1, 0, 0),
-        vec3(0, c, -s),
-        vec3(0, s, c)
-    );
-}
-
-mat3 rotateAxis(vec3 axis, float angle) {
-    float s = sin(angle);
-    float c = cos(angle);
-    float oc = 1.0 - c;
-    return mat3(
-        oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.x * axis.z + axis.y * s,
-        oc * axis.y * axis.x + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,
-        oc * axis.z * axis.x - axis.y * s,  oc * axis.z * axis.y + axis.x * s,  oc * axis.z * axis.z + c
-    );
-}
+  varying vec3 vGrassColor;
+  varying vec3 vGrassWorld;
+  varying float vGrassT;
 `;
 
-const VERTEX_SHADER_MAIN = `
-// Get world position of the instance
-vec3 instancePos = offset;
+const VERTEX_MAIN = /* glsl */ `
+  vec3 root = aBlade.xyz;
+  float bladeHeight = aBlade.w;
+  float angle = aBladeData.x;
+  float seed = aBladeData.y;
+  float rank = aBladeData.z;
+  float edge = aBladeData.w;
+  float t = position.y;
 
-// Wind calculation
-float noiseVal = snoise(vec2(instancePos.x * 0.1 + time * 0.5, instancePos.z * 0.1 + time * 0.5));
-float windAngle = (noiseVal * 0.5 + 0.5) * windStrength; // 0 to windStrength
+  float camDist = distance(root.xz, cameraPosition.xz);
+  float keep = mix(1.0, ${LOD_MIN_KEEP.toFixed(3)}, smoothstep(${LOD_START.toFixed(1)}, ${LOD_END.toFixed(1)}, camDist));
+  float lodScale = 1.0 - smoothstep(keep - 0.06, keep, rank);
+  float distanceFade = 1.0 - smoothstep(${FADE_START.toFixed(1)}, ${FADE_END.toFixed(1)}, camDist);
+  float h = bladeHeight * lodScale * distanceFade;
+  float widthScale = inversesqrt(keep) * mix(1.0, 1.6, smoothstep(20.0, ${FADE_END.toFixed(1)}, camDist));
 
-// Blade properties
-// float heightPercent = position.y / 1.5; // Defined in color_vertex
+  vec2 facing = vec2(cos(angle), sin(angle));
+  vec2 across = vec2(-facing.y, facing.x);
 
-// Apply rotations
-// 1. Initial random rotation
-mat3 rotY = rotateY(rotation);
+  vec2 gustUv = root.xz * 0.017 - uWindDirection * uTime * 0.085;
+  float gust = smoothstep(0.3, 0.85, texture2D(uNoiseTexture, gustUv).r);
+  float ripple = texture2D(uNoiseTexture, root.xz * 0.085 - uWindDirection * uTime * 0.32).b;
+  float wind = (0.18 + gust * 0.8 + ripple * 0.22) * uWindStrength;
+  float flutter = sin(uTime * (2.4 + seed * 1.8) + seed * 37.0 + root.x * 0.6) * (0.05 + gust * 0.07);
 
-// 2. Wind bending (rotate around X axis based on wind and height)
-// The tip bends more than the base
-float bendAngle = windAngle * heightPercent + (tilt * heightPercent);
-mat3 rotWind = rotateX(bendAngle);
+  vec2 bend = uWindDirection * wind * 0.55 + facing * (0.1 + seed * 0.2) + across * flutter;
 
-// 3. Player Interaction
-float maxLean = 0.0;
-vec3 bestPushAxis = vec3(1.0, 0.0, 0.0);
+  for (int i = 0; i < GRASS_MAX_PLAYERS; i++) {
+    if (i >= uPlayerCount) break;
+    vec3 player = uPlayers[i];
+    vec2 delta = root.xz - player.xz;
+    float d2 = dot(delta, delta);
+    if (d2 > 1.69) continue;
+    float d = sqrt(d2);
+    float push = 1.0 - d / 1.3;
+    push *= push * 2.4 * (1.0 - smoothstep(1.2, 2.4, abs(player.y - root.y)));
+    bend += (delta / max(d, 0.001)) * push;
+  }
 
-for(int i = 0; i < 10; i++) {
-    if (i >= playerCount) break;
-    vec3 pPos = playerPositions[i];
-    float dist = distance(instancePos.xz, pPos.xz);
-    float radius = 2.0; 
-    float falloff = 1.0 - smoothstep(0.0, radius, dist);
-    float lean = falloff * 1.5; 
+  float bendAmount = length(bend);
+  if (bendAmount > 1.35) {
+    bend *= 1.35 / bendAmount;
+    bendAmount = 1.35;
+  }
 
-    if (lean > maxLean) {
-        maxLean = lean;
-        
-        vec3 dir = instancePos - pPos;
-        if (length(dir) < 0.001) dir = vec3(0, 0, 1);
-        dir = normalize(dir);
-        bestPushAxis = normalize(cross(vec3(0, 1, 0), dir));
-    }
+  vec3 transformed = root;
+  transformed.xz += bend * (t * t) * h;
+  transformed.y += t * h * (1.0 - 0.32 * bendAmount * t);
+  transformed.xz += across * position.x * widthScale;
+
+  vec3 tip = mix(uColorLush, uColorDeep, aBladeTint.y * 0.6);
+  tip = mix(tip, uColorDry, aBladeTint.x * 0.85);
+  tip = mix(tip, uColorEdge, edge * 0.65);
+  tip *= 0.86 + seed * 0.28;
+  vGrassColor = mix(uColorBase, tip, pow(t, 0.75));
+  vGrassT = t;
+  vGrassWorld = transformed;
+`;
+
+const NORMAL_MAIN = /* glsl */ `
+  vec3 objectNormal = vec3(0.0, 1.0, 0.0);
+  {
+    float nAngle = aBladeData.x;
+    vec2 nFacing = vec2(cos(nAngle), sin(nAngle));
+    vec2 nAcross = vec2(-nFacing.y, nFacing.x);
+    float side = position.x >= 0.0 ? 1.0 : -1.0;
+    objectNormal = normalize(vec3(nAcross.x * side * 0.35, 1.0, nAcross.y * side * 0.35));
+  }
+  #ifdef USE_TANGENT
+    vec3 objectTangent = vec3(tangent.xyz);
+  #endif
+`;
+
+function createGrassMaterial() {
+  const material = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide });
+
+  const uniforms = {
+    uTime: sharedUniforms.uTime,
+    uWindDirection: sharedUniforms.uWindDirection,
+    uWindStrength: sharedUniforms.uWindStrength,
+    uNoiseTexture: sharedUniforms.uNoiseTexture,
+    uSunDirection: sharedUniforms.uSunDirection,
+    uPlayers: sharedUniforms.uPlayers,
+    uPlayerCount: sharedUniforms.uPlayerCount,
+    uColorBase: { value: new THREE.Color(GRASS_COLORS.base) },
+    uColorLush: { value: new THREE.Color(GRASS_COLORS.lush) },
+    uColorDeep: { value: new THREE.Color(GRASS_COLORS.deep) },
+    uColorDry: { value: new THREE.Color(GRASS_COLORS.dry) },
+    uColorEdge: { value: new THREE.Color(GRASS_COLORS.pathEdge) },
+  };
+
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+
+    shader.vertexShader = VERTEX_HEADER + shader.vertexShader
+      .replace('#include <beginnormal_vertex>', NORMAL_MAIN)
+      .replace('#include <begin_vertex>', VERTEX_MAIN);
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+        uniform vec3 uSunDirection;
+        varying vec3 vGrassColor;
+        varying vec3 vGrassWorld;
+        varying float vGrassT;`,
+      )
+      .replace('#include <color_fragment>', 'diffuseColor.rgb = vGrassColor;')
+      .replace('#include <normal_fragment_begin>', normalBeginWithoutFlip())
+      .replace('#include <lights_fragment_begin>', lightsBeginWithSunCapture())
+      .replace(
+        '#include <aomap_fragment>',
+        `#include <aomap_fragment>
+        float grassOcclusion = mix(0.32, 1.0, smoothstep(0.0, 0.85, vGrassT));
+        reflectedLight.indirectDiffuse *= grassOcclusion;
+        reflectedLight.directDiffuse *= mix(0.55, 1.0, vGrassT);
+        vec3 grassViewDir = normalize(vGrassWorld - cameraPosition);
+        float backLight = pow(saturate(dot(grassViewDir, uSunDirection)), 3.0);
+        totalEmissiveRadiance += capturedSunLight * vGrassColor * (backLight * 0.55 + 0.06) * vGrassT;`,
+      );
+  };
+
+  material.customProgramCacheKey = () => 'stylized-grass-v2';
+  return material;
 }
 
-mat3 rotPlayer = rotateAxis(bestPushAxis, maxLean * heightPercent);
+function generateChunkInstances({ chunkX, chunkZ, count, pathMask, exclusionZones }) {
+  const blades = new Float32Array(count * 4);
+  const data = new Float32Array(count * 4);
+  const tints = new Float32Array(count * 2);
+  let valid = 0;
+  let attempts = 0;
+  const maxAttempts = count * 3;
 
+  return {
+    step(budgetMs) {
+      const start = performance.now();
+      while (valid < count && attempts < maxAttempts) {
+        if ((attempts & 63) === 0 && performance.now() - start > budgetMs) return false;
+        attempts++;
 
-// Apply transformations
-vec3 pos = position;
+        const x = chunkX + (Math.random() - 0.5) * CHUNK_SIZE;
+        const z = chunkZ + (Math.random() - 0.5) * CHUNK_SIZE;
 
-// Scale
-pos.y *= scale; 
-pos.x *= 1.0; // Keep width 
+        let transition = THREE.MathUtils.smoothstep(pathEdgeValue(pathMask, x, z), 0.4, 0.82);
+        if (transition <= 0) continue;
+        transition = Math.min(transition, getExclusionDensity(x, z, exclusionZones));
+        if (Math.random() > transition * 1.15) continue;
 
-// Rotate
-pos = rotWind * pos; // Bend
-pos = rotY * pos;    // Orient
+        const patchLarge = sampleNoise(x * 0.0125, z * 0.0125, 0);
+        const patchMid = sampleNoise(x * 0.045 + 0.31, z * 0.045 + 0.31, 1);
+        const dryness = THREE.MathUtils.smoothstep(patchLarge * 0.72 + patchMid * 0.38, 0.6, 0.86);
+        const deepness = 1 - THREE.MathUtils.smoothstep(patchMid, 0.25, 0.5);
+        const lushness = 1 - THREE.MathUtils.smoothstep(patchMid, 0.25, 0.55);
 
-// Apply Player Bend (World Space)
-pos = rotPlayer * pos;
+        const edge = 1 - transition;
+        const height =
+          (0.36 + Math.random() * 0.32) *
+          (1 + lushness * 0.35 - dryness * 0.25) *
+          (0.45 + 0.55 * transition);
 
-// Translate
-pos += instancePos;
+        const o = valid * 4;
+        blades[o] = x;
+        blades[o + 1] = calculateHeight(x, z);
+        blades[o + 2] = z;
+        blades[o + 3] = height;
 
-vec3 transformed = pos;
-vec3 rotatedNormal = rotY * rotWind * objectNormal;
-rotatedNormal = rotPlayer * rotatedNormal;
-vNormal = normalize(normalMatrix * rotatedNormal);
+        data[o] = Math.random() * Math.PI * 2;
+        data[o + 1] = Math.random();
+        data[o + 2] = 0;
+        data[o + 3] = edge;
+        tints[valid * 2] = dryness;
+        tints[valid * 2 + 1] = deepness;
+        valid++;
+      }
 
-`;
+      for (let i = 0; i < valid; i++) data[i * 4 + 2] = (i + 0.5) / valid;
+      return true;
+    },
+    result() {
+      return {
+        blades: blades.slice(0, valid * 4),
+        data: data.slice(0, valid * 4),
+        tints: tints.slice(0, valid * 2),
+        count: valid,
+      };
+    },
+  };
+}
 
 const GrassChunk = memo(function GrassChunk({
-  chunkX,
-  chunkZ,
-  chunkSize,
-  density,
-  pathObjects,
-  frequency,
-  amplitude,
-  material // Shared material
+  chunk,
+  pathMask,
+  exclusionZones,
+  material,
+  onReady,
 }) {
-  const meshRef = useRef();
   const [geometry, setGeometry] = useState(null);
 
   useEffect(() => {
-    let isMounted = true;
-    const maxAttempts = density * 2;
+    let cancelled = false;
+    let timer = null;
+    const generator = generateChunkInstances({
+      chunkX: chunk.x,
+      chunkZ: chunk.z,
+      count: chunk.density,
+      pathMask,
+      exclusionZones,
+    });
 
-    // Arrays per chunk
-    const offsets = new Float32Array(density * 3);
-    const scales = new Float32Array(density);
-    const rotations = new Float32Array(density);
-    const tilts = new Float32Array(density);
-
-    let validCount = 0;
-    let attempts = 0;
-
-    const generate = () => {
-      const startTime = performance.now();
-      const ChunkTimeBudget = 5; // Reduced budget per chunk to allow interleaving
-
-      while (validCount < density && attempts < maxAttempts) {
-        if (validCount % 50 === 0 && performance.now() - startTime > ChunkTimeBudget) {
-          setTimeout(generate, 0);
-          return;
-        }
-
-        attempts++;
-
-        // Random position local to chunk but in world coordinates
-        // chunkX, chunkZ are the Top-Left (or center?) coordinates.
-        // Let's assume chunkX/Z are the Center coordinates of the chunk.
-        const x = (Math.random() - 0.5) * chunkSize + chunkX;
-        const z = (Math.random() - 0.5) * chunkSize + chunkZ;
-
-        // Path Check
-        let minTransition = 1;
-        for (let i = 0; i < pathObjects.length; i++) {
-          const t = pathObjects[i].getPathTransition(x, z, 1.5);
-          if (t < minTransition) minTransition = t;
-          if (minTransition <= 0.05) break;
-        }
-
-        if (Math.random() > minTransition) continue;
-
-        const groundHeight = calculateHeight(x, z, frequency, amplitude);
-
-        const idx3 = validCount * 3;
-        offsets[idx3] = x;
-        offsets[idx3 + 1] = groundHeight;
-        offsets[idx3 + 2] = z;
-
-        scales[validCount] = 0.8 + Math.random() * 0.5;
-        rotations[validCount] = Math.random() * Math.PI * 2;
-        tilts[validCount] = Math.random() * 0.5;
-
-        validCount++;
+    const run = () => {
+      if (cancelled) return;
+      if (!generator.step(6)) {
+        timer = window.setTimeout(run, 0);
+        return;
       }
-
-      // Finish Geometry creation
-      const bladeWidth = 0.035;
-      const bladeHeight = 0.4;
-      const joints = 5;
-      const formatGeometry = new THREE.PlaneGeometry(bladeWidth, bladeHeight, 1, joints);
-      formatGeometry.translate(0, bladeHeight / 2, 0);
-
+      const { blades, data, tints, count } = generator.result();
       const geo = new THREE.InstancedBufferGeometry();
-      geo.index = formatGeometry.index;
-      geo.attributes.position = formatGeometry.attributes.position;
-      geo.attributes.uv = formatGeometry.attributes.uv;
-      geo.attributes.normal = formatGeometry.attributes.normal;
-
-      geo.setAttribute('offset', new THREE.InstancedBufferAttribute(offsets.slice(0, validCount * 3), 3));
-      geo.setAttribute('scale', new THREE.InstancedBufferAttribute(scales.slice(0, validCount), 1));
-      geo.setAttribute('rotation', new THREE.InstancedBufferAttribute(rotations.slice(0, validCount), 1));
-      geo.setAttribute('tilt', new THREE.InstancedBufferAttribute(tilts.slice(0, validCount), 1));
-
-      // CRITICAL: Manually set bounding sphere for culling
-      // The mesh is at [0,0,0], but the instances are at [chunkX, ..., chunkZ]
-      // Radius of chunk = sqrt( (chunkSize/2)^2 + (chunkSize/2)^2 )
-      const radius = (chunkSize / 2) * Math.sqrt(2);
-      // Add a bit of padding for height variation and blade height
-      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(chunkX, 0, chunkZ), radius + 2);
-
-      if (isMounted) {
-        setGeometry(geo);
-      }
+      geo.index = BLADE_GEOMETRY.index;
+      geo.setAttribute('position', BLADE_GEOMETRY.attributes.position);
+      geo.setAttribute('normal', BLADE_GEOMETRY.attributes.normal);
+      geo.setAttribute('aBlade', new THREE.InstancedBufferAttribute(blades, 4));
+      geo.setAttribute('aBladeData', new THREE.InstancedBufferAttribute(data, 4));
+      geo.setAttribute('aBladeTint', new THREE.InstancedBufferAttribute(tints, 2));
+      geo.instanceCount = count;
+      geo.userData.totalInstances = count;
+      geo.boundingSphere = new THREE.Sphere(
+        new THREE.Vector3(chunk.x, calculateHeight(chunk.x, chunk.z), chunk.z),
+        CHUNK_SIZE * 0.75 + 2,
+      );
+      geo.boundingBox = new THREE.Box3(
+        new THREE.Vector3(chunk.x - CHUNK_SIZE / 2 - 1, -3, chunk.z - CHUNK_SIZE / 2 - 1),
+        new THREE.Vector3(chunk.x + CHUNK_SIZE / 2 + 1, 4, chunk.z + CHUNK_SIZE / 2 + 1),
+      );
+      setGeometry(geo);
     };
 
-    setTimeout(generate, Math.random() * 100); // Random delay start to stagger chunks
+    timer = window.setTimeout(run, chunk.delay);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [chunk, pathMask, exclusionZones]);
 
-    return () => { isMounted = false; };
-  }, [chunkX, chunkZ, chunkSize, density, pathObjects, frequency, amplitude]);
+  useEffect(() => {
+    if (!geometry) return undefined;
+    onReady(chunk.id, geometry);
+    return () => {
+      onReady(chunk.id, null);
+      geometry.dispose();
+    };
+  }, [geometry, chunk.id, onReady]);
 
   if (!geometry) return null;
-
-  return (
-    <mesh
-      ref={meshRef}
-      position={[0, 0, 0]} // Mesh stays at origin, offsets are world coords
-      geometry={geometry}
-      material={material}
-      castShadow
-      receiveShadow
-      frustumCulled={true} // Enable Culling!
-    />
-  );
+  return <mesh geometry={geometry} material={material} receiveShadow />;
 });
 
 const Grass = memo(function Grass({
   maxDensity = 500000,
-  width = 100,
-  height = 100,
-  position = [0, 0, 0],
-  frequency = 0.1,
-  amplitude = 1,
+  width = 112,
+  height = 112,
   paths = [],
-
-  playerRef,
-  players = {}, // New prop for remote players
-  localPlayerId
+  exclusionZones = [],
 }) {
-  // Memoize path objects once for all chunks
-  const pathObjects = useMemo(() => {
-    return paths.map(p => new Path(p.type, p.points, p.width, p.material));
-  }, [paths]);
+  const pathMask = useMemo(() => getPathMask(paths), [paths]);
+  const material = useMemo(() => createGrassMaterial(), []);
+  useEffect(() => () => material.dispose(), [material]);
 
-  // Create Material once
-  const material = useMemo(() => {
-    const mat = new THREE.MeshPhongMaterial({
-      color: 0xffffff,
-      emissive: 0x000000,
-      specular: 0x111111,
-      shininess: 10,
-      side: THREE.DoubleSide,
-      vertexColors: true
-    });
-
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.time = { value: 0 };
-      shader.uniforms.windStrength = { value: 1.0 };
-      shader.uniforms.playerPositions = { value: new Array(10).fill(0).map(() => new THREE.Vector3(0, -1000, 0)) };
-      shader.uniforms.playerCount = { value: 0 };
-      mat.userData.shader = shader;
-      shader.vertexShader = VERTEX_SHADER_HEADER + shader.vertexShader;
-      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', VERTEX_SHADER_MAIN);
-      shader.vertexShader = shader.vertexShader.replace('#include <color_vertex>', `
-        #include <color_vertex>
-        float heightPercent = position.y / 0.4;
-        vColor = mix(vec3(0.0, 0.2, 0.0), vec3(0.5, 0.8, 0.2), heightPercent);
-      `);
-    };
-    return mat;
-  }, []);
-
-  useFrame(({ clock }) => {
-    if (material.userData.shader) {
-      material.userData.shader.uniforms.time.value = clock.getElapsedTime();
-
-      const positions = material.userData.shader.uniforms.playerPositions.value;
-      let count = 0;
-
-      // 1. Local Player
-      if (playerRef && playerRef.current) {
-        positions[count].copy(playerRef.current);
-        count++;
-      }
-
-      // 2. Remote Players
-      if (players) {
-        Object.entries(players).forEach(([id, data]) => {
-          if (id !== localPlayerId && data.position && count < 10) {
-            positions[count].set(data.position.x, data.position.y, data.position.z);
-            count++;
-          }
-        });
-      }
-
-      material.userData.shader.uniforms.playerCount.value = count;
-    }
-  });
-
-  // Calculate Grid
   const chunks = useMemo(() => {
-    const CHUNK_SIZE = 25; // 25x25 units per chunk
     const cols = Math.ceil(width / CHUNK_SIZE);
     const rows = Math.ceil(height / CHUNK_SIZE);
-    const totalChunks = cols * rows;
-
-    // Density per chunk to match total requested density
-    const densityPerChunk = Math.floor(maxDensity / totalChunks);
-
-    const chunkList = [];
-    const startX = -width / 2 + CHUNK_SIZE / 2;
-    const startZ = -height / 2 + CHUNK_SIZE / 2;
-
+    const densityPerChunk = Math.floor(maxDensity / (cols * rows));
+    const list = [];
     for (let c = 0; c < cols; c++) {
       for (let r = 0; r < rows; r++) {
-        chunkList.push({
-          id: `chunk-${c}-${r}`,
-          x: startX + c * CHUNK_SIZE + position[0],
-          z: startZ + r * CHUNK_SIZE + position[2],
-          size: CHUNK_SIZE,
-          density: densityPerChunk
-        });
+        const x = -width / 2 + CHUNK_SIZE / 2 + c * CHUNK_SIZE;
+        const z = -height / 2 + CHUNK_SIZE / 2 + r * CHUNK_SIZE;
+        list.push({ id: `grass-${c}-${r}`, x, z, density: densityPerChunk, distance: Math.hypot(x, z) });
       }
     }
-    return chunkList;
-  }, [width, height, maxDensity, position]);
+    list.sort((a, b) => a.distance - b.distance);
+    list.forEach((chunk, index) => {
+      chunk.delay = index * 8;
+    });
+    return list;
+  }, [width, height, maxDensity]);
+
+  const readyGeometries = useRef(new Map());
+  const onReady = useMemo(
+    () => (id, geometry) => {
+      if (geometry) {
+        const chunk = chunks.find((item) => item.id === id);
+        readyGeometries.current.set(id, { geometry, chunk });
+      } else {
+        readyGeometries.current.delete(id);
+      }
+    },
+    [chunks],
+  );
+
+  useFrame(({ camera }) => {
+    const half = CHUNK_SIZE / 2;
+    readyGeometries.current.forEach(({ geometry, chunk }) => {
+      const dx = Math.max(Math.abs(camera.position.x - chunk.x) - half, 0);
+      const dz = Math.max(Math.abs(camera.position.z - chunk.z) - half, 0);
+      const nearest = Math.hypot(dx, dz);
+      const total = geometry.userData.totalInstances;
+      geometry.instanceCount = nearest > FADE_END
+        ? 0
+        : Math.min(total, Math.ceil(total * (keepFraction(nearest) + 0.02)));
+    });
+  });
 
   return (
     <group>
-      {chunks.map(chunk => (
+      {chunks.map((chunk) => (
         <GrassChunk
           key={chunk.id}
-          chunkX={chunk.x}
-          chunkZ={chunk.z}
-          chunkSize={chunk.size}
-          density={chunk.density}
-          pathObjects={pathObjects}
-          frequency={frequency}
-          amplitude={amplitude}
+          chunk={chunk}
+          pathMask={pathMask}
+          exclusionZones={exclusionZones}
           material={material}
+          onReady={onReady}
         />
       ))}
     </group>

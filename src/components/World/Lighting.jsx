@@ -1,40 +1,101 @@
-import { useRef, useEffect } from 'react';
-import * as THREE from 'three'; // Importer THREE si ce n'est pas déjà fait
+import { memo, useEffect, useMemo, useRef } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import * as THREE from 'three';
+import { LIGHTING, SUN_DIRECTION } from './environment';
 
-// Accepter sunPosition en prop
-export default function Lighting({ sunPosition }) {
+const LIGHT_DISTANCE = 90;
+
+// Soleil + lumière d'ambiance ciel/sol. La zone d'ombre suit la caméra et reste alignée
+// sur la grille des texels de la shadow map pour éviter le scintillement des ombres.
+const Lighting = memo(function Lighting({ shadowMapSize = 2048, shadowExtent = 34 }) {
   const lightRef = useRef();
+  const scene = useThree((state) => state.scene);
+  const target = useMemo(() => new THREE.Object3D(), []);
 
-  // Utiliser un effet pour mettre à jour la position de la lumière quand sunPosition change
+  const lightBasis = useMemo(() => {
+    const z = SUN_DIRECTION.clone();
+    const x = new THREE.Vector3(0, 1, 0).cross(z).normalize();
+    const y = z.clone().cross(x).normalize();
+    return { x, y, z };
+  }, []);
+
+  const scratch = useMemo(
+    () => ({ forward: new THREE.Vector3(), focus: new THREE.Vector3() }),
+    [],
+  );
+
   useEffect(() => {
-    if (lightRef.current && sunPosition) {
-      // Multiplier la position normalisée du soleil pour la placer loin
-      // La directionalLight brille *depuis* sa position *vers* l'origine (par défaut)
-      lightRef.current.position.copy(sunPosition).normalize().multiplyScalar(20);
-      // Optionnel: faire en sorte que la lumière cible un point proche de l'origine ou la caméra
-      // lightRef.current.target.position.set(0, 0, 0);
-      // lightRef.current.target.updateMatrixWorld();
+    scene.add(target);
+    return () => {
+      scene.remove(target);
+    };
+  }, [scene, target]);
+
+  useEffect(() => {
+    const light = lightRef.current;
+    if (!light) return;
+
+    light.target = target;
+    const { shadow } = light;
+    shadow.mapSize.set(shadowMapSize, shadowMapSize);
+    shadow.camera.left = -shadowExtent;
+    shadow.camera.right = shadowExtent;
+    shadow.camera.top = shadowExtent;
+    shadow.camera.bottom = -shadowExtent;
+    shadow.camera.near = 1;
+    shadow.camera.far = LIGHT_DISTANCE * 2;
+    shadow.camera.updateProjectionMatrix();
+    shadow.bias = -0.0003;
+    shadow.normalBias = 0.035;
+
+    if (shadow.map) {
+      shadow.map.dispose();
+      shadow.map = null;
     }
-  }, [sunPosition]);
+    shadow.needsUpdate = true;
+  }, [shadowMapSize, shadowExtent, target]);
+
+  useFrame(({ camera }) => {
+    const light = lightRef.current;
+    if (!light) return;
+
+    const { forward, focus } = scratch;
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+    forward.normalize();
+
+    focus.copy(camera.position).addScaledVector(forward, shadowExtent * 0.45);
+    focus.y = 0;
+
+    const texel = (shadowExtent * 2) / shadowMapSize;
+    const lx = Math.round(focus.dot(lightBasis.x) / texel) * texel;
+    const ly = Math.round(focus.dot(lightBasis.y) / texel) * texel;
+    const lz = focus.dot(lightBasis.z);
+    focus
+      .copy(lightBasis.x)
+      .multiplyScalar(lx)
+      .addScaledVector(lightBasis.y, ly)
+      .addScaledVector(lightBasis.z, lz);
+
+    target.position.copy(focus);
+    target.updateMatrixWorld();
+    light.position.copy(focus).addScaledVector(SUN_DIRECTION, LIGHT_DISTANCE);
+  });
 
   return (
     <>
-      {/* Augmenter légèrement l'intensité ambiante */}
-
-      <directionalLight
-        ref={lightRef} // Référence pour mettre à jour la position
-        // position={[10, 10, 5]} // Position gérée par useEffect
-        intensity={1.0} // Augmenter un peu l'intensité du soleil
-        castShadow
-        shadow-mapSize-width={2048} // Augmenter la résolution des ombres
-        shadow-mapSize-height={2048}
-        shadow-camera-far={50}
-        shadow-camera-left={-15} // Ajuster la zone de la caméra d'ombre si nécessaire
-        shadow-camera-right={15}
-        shadow-camera-top={15}
-        shadow-camera-bottom={-15}
+      <hemisphereLight
+        args={[LIGHTING.hemiSkyColor, LIGHTING.hemiGroundColor, LIGHTING.hemiIntensity]}
       />
-      {/* <pointLight position={[-10, -10, -10]} intensity={0.5} /> Supprimer la pointLight */}
+      <directionalLight
+        ref={lightRef}
+        castShadow
+        color={LIGHTING.sunColor}
+        intensity={LIGHTING.sunIntensity}
+      />
     </>
   );
-}
+});
+
+export default Lighting;

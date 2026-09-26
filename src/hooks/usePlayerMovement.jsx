@@ -1,200 +1,228 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import * as THREE from 'three';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { useRapier } from '@react-three/rapier';
+import * as THREE from 'three';
+import { useControls } from '../context/ControlsContext';
 
-// Intervalles pour les bruits de pas (en secondes)
-// Supprimer ces constantes d'ici, elles sont dans FootstepAudio
-// const WALK_STEP_INTERVAL = 0.5;
-// const RUN_STEP_INTERVAL = 0.3;
+const INPUT_DEADZONE = 0.1;
+const NETWORK_SEND_INTERVAL_MS = 50;
+const POSITION_THRESHOLD_SQ = 0.0001;
+const ROTATION_THRESHOLD = 0.001;
+const ROTATION_DOT_THRESHOLD = Math.cos(ROTATION_THRESHOLD / 2);
+const GROUND_RAY_OFFSET = 0.35;
+const GROUND_RAY_LENGTH = 0.6;
+const GROUNDED_DISTANCE = 0.5;
+const COYOTE_TIME = 0.14;
+const JUMP_COOLDOWN = 0.3;
+const WALK_JUMP_VELOCITY = 7;
+const RUN_JUMP_VELOCITY = 8;
 
-export default function usePlayerMovement(emitPlayerMove, emitPlayerAnimation, avatarRef) {
+export default function usePlayerMovement(
+  emitPlayerMove,
+  emitPlayerAnimation,
+  avatarRef,
+) {
+  const { movementJoystickRef } = useControls();
+  const { world, rapier } = useRapier();
   const [locomotion, setLocomotion] = useState('idle');
-  const [movementDirection, setMovementDirection] = useState(new THREE.Vector3(0, 0, 0));
-  const [cameraAngle, setCameraAngle] = useState({ horizontal: 0, vertical: Math.PI / 8 });
-  const cameraAngleRef = useRef(cameraAngle);
+  const locomotionRef = useRef('idle');
+  const movementDirection = useMemo(() => new THREE.Vector3(), []);
+  const cameraAngleRef = useRef({
+    horizontal: 0,
+    vertical: Math.PI / 8,
+  });
 
   const lastPosition = useRef(new THREE.Vector3());
   const lastQuaternion = useRef(new THREE.Quaternion());
   const lastLocomotion = useRef(locomotion);
+  const lastNetworkSend = useRef(0);
+  const lastGroundedAt = useRef(-Infinity);
+  const lastJumpAt = useRef(-Infinity);
+  const jumpHeldRef = useRef(false);
+  const groundRay = useMemo(
+    () => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 }),
+    [rapier],
+  );
+
+  const isGrounded = useCallback((rigidBody) => {
+    const position = rigidBody.translation();
+    groundRay.origin.x = position.x;
+    groundRay.origin.y = position.y + GROUND_RAY_OFFSET;
+    groundRay.origin.z = position.z;
+    const hit = world.castRay(
+      groundRay,
+      GROUND_RAY_LENGTH,
+      true,
+      rapier.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      undefined,
+      rigidBody,
+    );
+    return Boolean(hit && hit.timeOfImpact <= GROUNDED_DISTANCE);
+  }, [world, rapier, groundRay]);
+
+  const setCameraAngle = useCallback((valueOrUpdater) => {
+    const previous = cameraAngleRef.current;
+    const next = typeof valueOrUpdater === 'function'
+      ? valueOrUpdater(previous)
+      : valueOrUpdater;
+
+    if (!next) return;
+
+    cameraAngleRef.current = {
+      horizontal: next.horizontal,
+      vertical: THREE.MathUtils.clamp(
+        next.vertical,
+        0.1,
+        Math.PI / 2 - 0.1,
+      ),
+    };
+  }, []);
+
+  const performJump = useCallback((isRunning) => {
+    const rigidBody = avatarRef.current?.rigidBodyRef?.current;
+    if (!rigidBody) return;
+
+    const now = performance.now() / 1000;
+    if (now - lastJumpAt.current < JUMP_COOLDOWN) return;
+    const canJump = isGrounded(rigidBody) || now - lastGroundedAt.current < COYOTE_TIME;
+    if (!canJump) return;
+
+    const velocity = rigidBody.linvel();
+    rigidBody.setLinvel({
+      x: velocity.x,
+      y: isRunning ? RUN_JUMP_VELOCITY : WALK_JUMP_VELOCITY,
+      z: velocity.z,
+    }, true);
+    lastJumpAt.current = now;
+    lastGroundedAt.current = -Infinity;
+  }, [avatarRef, isGrounded]);
+
+  useEffect(() => {
+    const handleMobileJump = () => {
+      performJump(locomotionRef.current === 'run');
+    };
+
+    window.addEventListener('mobile-jump', handleMobileJump);
+    return () => window.removeEventListener('mobile-jump', handleMobileJump);
+  }, [performJump]);
 
   const updateMovement = useCallback((keysPressed) => {
+    const safeKeys = keysPressed?.current ?? {};
     const horizontalAngle = cameraAngleRef.current.horizontal;
+    const joystickX = Math.abs(movementJoystickRef.current?.x ?? 0) > INPUT_DEADZONE
+      ? movementJoystickRef.current.x
+      : 0;
+    const joystickY = Math.abs(movementJoystickRef.current?.y ?? 0) > INPUT_DEADZONE
+      ? movementJoystickRef.current.y
+      : 0;
+    const forwardInput =
+      (safeKeys.KeyW ? 1 : 0) -
+      (safeKeys.KeyS ? 1 : 0) +
+      joystickY;
+    const rightInput =
+      (safeKeys.KeyD ? 1 : 0) -
+      (safeKeys.KeyA ? 1 : 0) +
+      joystickX;
+    const sinAngle = Math.sin(horizontalAngle);
+    const cosAngle = Math.cos(horizontalAngle);
 
-    const cameraForward = new THREE.Vector3(-Math.sin(horizontalAngle), 0, -Math.cos(horizontalAngle));
-    const cameraRight = new THREE.Vector3(Math.cos(horizontalAngle), 0, -Math.sin(horizontalAngle));
+    movementDirection.set(
+      forwardInput * -sinAngle + rightInput * cosAngle,
+      0,
+      forwardInput * -cosAngle - rightInput * sinAngle,
+    );
 
-    const finalMoveDirection = new THREE.Vector3(0, 0, 0);
-    let isMoving = false;
-    const isRunning = keysPressed.current.ShiftLeft || keysPressed.current.ShiftRight;
-    const isJumping = keysPressed.current.Space;
+    const isMoving = movementDirection.lengthSq() > 0;
+    if (isMoving) movementDirection.normalize();
 
-    if (keysPressed.current.KeyW) {
-      finalMoveDirection.add(cameraForward);
-      isMoving = true;
+    const isRunning = Boolean(safeKeys.ShiftLeft || safeKeys.ShiftRight);
+    const jumpHeld = Boolean(safeKeys.Space);
+    if (jumpHeld && !jumpHeldRef.current) performJump(isRunning);
+    jumpHeldRef.current = jumpHeld;
+
+    const nextLocomotion = isMoving
+      ? (isRunning ? 'run' : 'walk')
+      : 'idle';
+
+    if (nextLocomotion !== locomotionRef.current) {
+      locomotionRef.current = nextLocomotion;
+      setLocomotion(nextLocomotion);
     }
-    if (keysPressed.current.KeyS) {
-      finalMoveDirection.sub(cameraForward);
-      isMoving = true;
-    }
-    if (keysPressed.current.KeyA) {
-      finalMoveDirection.sub(cameraRight);
-      isMoving = true;
-    }
-    if (keysPressed.current.KeyD) {
-      finalMoveDirection.add(cameraRight);
-      isMoving = true;
-    }
+  }, [movementDirection, movementJoystickRef, performJump]);
 
-    if (finalMoveDirection.lengthSq() > 0) {
-      finalMoveDirection.normalize();
+  useFrame(() => {
+    const avatarGroup = avatarRef?.current;
+    const rigidBody = avatarGroup?.rigidBodyRef?.current;
+    if (!rigidBody) return;
+
+    if (rigidBody.linvel().y < 0.5 && isGrounded(rigidBody)) {
+      lastGroundedAt.current = performance.now() / 1000;
     }
+    if (!emitPlayerMove) return;
 
-    // Si l'avatar est défini et qu'une touche de saut est pressée
-    if (isJumping && avatarRef.current && avatarRef.current.rigidBodyRef?.current) {
-      // Vérifier si le personnage est au sol avant de sauter
-      const position = avatarRef.current.rigidBodyRef.current.translation();
-      const velocity = avatarRef.current.rigidBodyRef.current.linvel();
-      
-      // Améliorer la détection du sol avec une marge plus grande
-      // Utilisation d'une marge plus élevée et détection moins stricte pour éviter les blocages
-      const isGrounded = position.y < 2.0 && Math.abs(velocity.y) < 1.0;
-      
-      if (isGrounded) {
-        // Force du saut basée sur l'état de course ou marche
-        const jumpForce = isRunning ? 14 : 10;
-        
-        // Toujours ajouter une petite force de déblocage horizontale, même si immobile
-        const movementScale = finalMoveDirection.lengthSq() > 0 ? 2.5 : 0.5;
-        const jumpDirection = finalMoveDirection.lengthSq() > 0 
-          ? finalMoveDirection.clone() 
-          : new THREE.Vector3(Math.random() * 0.6 - 0.3, 0, Math.random() * 0.6 - 0.3);
-        
-        // Petit boost initial vers le haut avant l'impulsion principale
-        // Cela aide à se "décoller" du sol avant d'appliquer la force principale
-        avatarRef.current.rigidBodyRef.current.applyImpulse({
-          x: 0,
-          y: 2.0,
-          z: 0
-        });
-        
-        // Après un court délai, appliquer l'impulsion principale
-        setTimeout(() => {
-          if (avatarRef.current && avatarRef.current.rigidBodyRef?.current) {
-            avatarRef.current.rigidBodyRef.current.applyImpulse({
-              x: jumpDirection.x * movementScale,
-              y: jumpForce, 
-              z: jumpDirection.z * movementScale
-            });
-          }
-        }, 30);
-      } else if (position.y < 3.0) {
-        // Même si pas complètement au sol, permettre un "petit saut" si on est près du sol
-        // Cela aide à se débloquer des situations où on est légèrement au-dessus du sol
-        avatarRef.current.rigidBodyRef.current.applyImpulse({
-          x: finalMoveDirection.x * 1.5,
-          y: 6, 
-          z: finalMoveDirection.z * 1.5
-        });
-      }
-    }
+    const now = performance.now();
+    if (now - lastNetworkSend.current < NETWORK_SEND_INTERVAL_MS) return;
 
-    setMovementDirection(finalMoveDirection);
-    
-    const newLocomotion = isMoving ? (isRunning ? 'run' : 'walk') : 'idle';
-    if (newLocomotion !== locomotion) {
-        setLocomotion(newLocomotion);
-    }
-  }, [locomotion, avatarRef]);
-
-  const updateCameraAngleRef = useCallback(() => {
-    cameraAngleRef.current = cameraAngle;
-  }, [cameraAngle]);
-
-  useFrame((state, delta) => {
-    // Vérifier si l'avatar et son rigidBody sont prêts, et si emitPlayerMove existe
-    if (!avatarRef?.current?.rigidBodyRef?.current || !emitPlayerMove) {
+    let currentPosition;
+    try {
+      currentPosition = rigidBody.translation();
+    } catch {
       return;
     }
 
-    const avatarGroup = avatarRef.current; // <-- Ref au groupe visuel
-    const rigidBody = avatarGroup.rigidBodyRef.current; // <-- Ref au corps physique
+    const currentQuaternion = avatarGroup.quaternion;
+    if (!currentPosition || !currentQuaternion) return;
 
-    let currentPositionVec = null;
-    let currentRotationQuat = null;
-    try {
-      currentPositionVec = rigidBody.translation();       // <-- Lire la POSITION depuis rigidBody
-      currentRotationQuat = avatarGroup.quaternion;    // <-- Lire la ROTATION depuis le groupe visuel
-    } catch (e) {
-        console.error("[usePlayerMovement] Erreur lecture rigidBody ou group:", e);
-        return;
-    }
+    const dx = currentPosition.x - lastPosition.current.x;
+    const dy = currentPosition.y - lastPosition.current.y;
+    const dz = currentPosition.z - lastPosition.current.z;
+    const positionChanged = dx * dx + dy * dy + dz * dz > POSITION_THRESHOLD_SQ;
+    const quaternionDot = Math.abs(
+      lastQuaternion.current.x * currentQuaternion.x +
+      lastQuaternion.current.y * currentQuaternion.y +
+      lastQuaternion.current.z * currentQuaternion.z +
+      lastQuaternion.current.w * currentQuaternion.w,
+    );
+    const rotationChanged = quaternionDot < ROTATION_DOT_THRESHOLD;
 
-    // Vérifier si les objets retournés sont valides
-    if (!currentPositionVec || typeof currentPositionVec.x === 'undefined' || 
-        !currentRotationQuat || typeof currentRotationQuat.w === 'undefined') {
-      
-        return;
-    }
-    
-     // Convertir la position Vector3 en objet simple {x, y, z}
-    const currentPosition = {
-        x: currentPositionVec.x,
-        y: currentPositionVec.y,
-        z: currentPositionVec.z
-    };
-    // Cloner le quaternion pour éviter les mutations accidentelles si nécessaire
-    // et s'assurer que c'est un objet simple {x, y, z, w}
-    const currentQuaternion = {
-        x: currentRotationQuat.x,
-        y: currentRotationQuat.y,
-        z: currentRotationQuat.z,
-        w: currentRotationQuat.w
-    }; 
+    if (!positionChanged && !rotationChanged) return;
 
+    emitPlayerMove({
+      position: {
+        x: currentPosition.x,
+        y: currentPosition.y,
+        z: currentPosition.z,
+      },
+      rotation: {
+        x: currentQuaternion.x,
+        y: currentQuaternion.y,
+        z: currentQuaternion.z,
+        w: currentQuaternion.w,
+      },
+    });
 
-    const positionThresholdSq = 0.0001; // Seuil au carré
-    const rotationThreshold = 0.001; // Radians
-    
-    // Comparaison de position
-    const tempCurrentPosVec3 = new THREE.Vector3(currentPosition.x, currentPosition.y, currentPosition.z);
-    const posDiffSq = tempCurrentPosVec3.distanceToSquared(lastPosition.current);
-
-    // Comparaison de rotation
-    const tempCurrentRotQuat = new THREE.Quaternion(currentQuaternion.x, currentQuaternion.y, currentQuaternion.z, currentQuaternion.w);
-    const rotDiff = lastQuaternion.current.angleTo(tempCurrentRotQuat);
-
-    // LOG: Afficher les différences calculées
-    // console.log(`[usePlayerMovement useFrame] Pos Diff Sq: ${posDiffSq.toFixed(6)}, Rot Diff: ${rotDiff.toFixed(6)}`);
-
-    const positionChanged = posDiffSq > positionThresholdSq;
-    const rotationChanged = rotDiff > rotationThreshold;
-
-    if (positionChanged || rotationChanged) {
-      // console.log("Emitting move from usePlayerMovement:", { position: currentPosition, rotation: currentQuaternion }); // Décommenter pour log
-      emitPlayerMove({
-        position: currentPosition,
-        rotation: currentQuaternion
-      });
-      // Mettre à jour les dernières valeurs connues
-      lastPosition.current.set(currentPosition.x, currentPosition.y, currentPosition.z);
-      lastQuaternion.current.set(currentQuaternion.x, currentQuaternion.y, currentQuaternion.z, currentQuaternion.w);
-    }
+    lastPosition.current.set(
+      currentPosition.x,
+      currentPosition.y,
+      currentPosition.z,
+    );
+    lastQuaternion.current.copy(currentQuaternion);
+    lastNetworkSend.current = now;
   });
 
   useEffect(() => {
     if (emitPlayerAnimation && locomotion !== lastLocomotion.current) {
-        emitPlayerAnimation({ locomotion });
-        lastLocomotion.current = locomotion;
+      emitPlayerAnimation({ locomotion });
+      lastLocomotion.current = locomotion;
     }
   }, [locomotion, emitPlayerAnimation]);
 
   return {
     locomotion,
     movementDirection,
-    cameraAngle,
-    setCameraAngle,
     cameraAngleRef,
+    setCameraAngle,
     updateMovement,
-    updateCameraAngleRef
   };
 }

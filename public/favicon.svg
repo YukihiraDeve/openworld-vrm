@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6fa7e6"/>
+      <stop offset="1" stop-color="#cfe2ee"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fc24a"/>
+      <stop offset="1" stop-color="#3f7424"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+  <path d="M0 46c12-5 22-6 32-4s20 2 32-3v25H0z" fill="#5f9a2e"/>
+  <rect x="29" y="30" width="6" height="18" rx="2" fill="#7d5b3e"/>
+  <circle cx="32" cy="24" r="13" fill="url(#leaf)"/>
+  <circle cx="23" cy="29" r="8" fill="#4f8a2c"/>
+  <circle cx="41" cy="29" r="8" fill="#4f8a2c"/>
+  <circle cx="28" cy="19" r="4" fill="#a9cc4f" opacity="0.7"/>
+  <circle cx="50" cy="12" r="5" fill="#fff3dc"/>
+</svg>

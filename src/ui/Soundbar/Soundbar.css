@@ -1,51 +1,96 @@
 .soundbar-container {
-  position: fixed; /* Ou 'absolute' selon votre layout global */
-  top: 20px; /* Ajustez selon vos besoins */
-  right: 20px; /* Ajustez selon vos besoins */
+  position: fixed;
+  top: 16px;
+  right: 16px;
   display: flex;
   align-items: center;
-  background-color: rgba(240, 240, 230, 0.8); /* Un fond clair légèrement transparent */
-  padding: 8px 15px;
-  border-radius: 20px; /* Coins arrondis */
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Ombre légère */
-  z-index: 1000; /* Assure qu'il est au-dessus des autres éléments */
+  gap: 8px;
+  padding: 6px 14px 6px 6px;
+  background: rgba(253, 251, 247, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(28, 38, 18, 0.18);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 1000;
 }
 
-.sound-icon {
-  width: 24px; /* Taille de l'icône */
-  height: 24px;
-  margin-right: 10px; /* Espace entre l'icône et le slider */
-  cursor: pointer; /* Indique qu'on peut cliquer (pour mute/unmute par exemple) */
+.sound-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.sound-toggle:hover {
+  background: rgba(111, 159, 63, 0.14);
+}
+
+.sound-toggle img {
+  width: 20px;
+  height: 20px;
+  transition: opacity 0.2s ease;
+}
+
+.sound-toggle.is-muted img {
+  opacity: 0.35;
+}
+
+.sound-toggle.is-muted::after {
+  content: '';
+  position: absolute;
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: #8a3b2a;
+  transform: rotate(-45deg);
 }
 
 .volume-slider {
-  -webkit-appearance: none; /* Supprime l'apparence par défaut sur Webkit */
+  -webkit-appearance: none;
   appearance: none;
-  width: 100px; /* Largeur du slider */
-  height: 8px; /* Hauteur de la barre du slider */
-  background: #c5d8b3; /* Couleur de fond du slider (vert doux) */
-  border-radius: 5px; /* Coins arrondis pour la barre */
-  outline: none; /* Supprime le contour au focus */
+  width: 96px;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    #7fb04a 0%,
+    #9cc45a var(--volume, 50%),
+    rgba(61, 58, 51, 0.15) var(--volume, 50%)
+  );
+  outline: none;
   cursor: pointer;
 }
 
-/* Style pour la poignée du slider (Chrome, Edge, Safari) */
 .volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 18px; /* Taille de la poignée */
-  height: 18px;
-  background: #88a271; /* Couleur de la poignée (vert plus foncé) */
-  border-radius: 50%; /* Poignée ronde */
+  width: 16px;
+  height: 16px;
+  border: 2px solid #6f9f3f;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   cursor: pointer;
 }
 
-/* Style pour la poignée du slider (Firefox) */
 .volume-slider::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  background: #88a271;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #6f9f3f;
   border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   cursor: pointer;
-  border: none; /* Supprime la bordure par défaut sur Firefox */
-} 
+}
+
+.volume-slider:focus-visible {
+  box-shadow: 0 0 0 3px rgba(127, 176, 74, 0.35);
+}

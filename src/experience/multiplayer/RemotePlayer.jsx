@@ -1,9 +1,9 @@
-import React from 'react';
+import { memo } from 'react';
 import VrmAvatar from '../../components/VrmAvatar';
 import { MODELS, ANIMATIONS, MODEL_DIRECTION_OFFSETS } from '../../utils/const'; // Assurez-vous que le chemin est correct
 
 // Ce composant recevra les données d'un joueur distant et affichera son avatar
-export default function RemotePlayer({ playerData, audioListener, stepSoundBuffers, locomotion: remoteLocomotion }) {
+const RemotePlayer = memo(function RemotePlayer({ playerData, audioListener, stepSoundBuffers, locomotion: remoteLocomotion }) {
   if (!playerData) {
     return null; 
   }
@@ -41,10 +41,13 @@ export default function RemotePlayer({ playerData, audioListener, stepSoundBuffe
       audioListener={audioListener}
       stepSoundBuffers={stepSoundBuffers}
       capsuleCollider={false}
+      silentLoading={true} // Ne pas bloquer l'UI du joueur local
       currentEmote={currentEmote}
       currentEmoteType={currentEmoteType}
       emoteAnimationUrl={currentEmoteType === 'animation' && currentEmote ? ANIMATIONS[currentEmote] : null}
       emoteExpression={currentEmoteType === 'expression' ? currentEmote : null}
     />
   );
-}
+});
+
+export default RemotePlayer;

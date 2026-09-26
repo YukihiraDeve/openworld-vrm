@@ -1,99 +1,96 @@
-import React, { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useAudioContext } from '../../context/AudioContext';
 
-// Constantes pour les intervalles de pas (identiques à celles de VrmAvatar/usePlayerMovement)
 const WALK_STEP_INTERVAL = 0.5;
 const RUN_STEP_INTERVAL = 0.3;
-const BASE_FOOTSTEP_VOLUME = 0.5; // Volume de base pour les pas
+const BASE_FOOTSTEP_VOLUME = 0.5;
+const FOOTSTEP_VOICE_COUNT = 2;
 
-export default function FootstepAudio({ 
-  audioListener, 
-  stepSoundBuffers, // Ref vers les buffers chargés
-  targetRef,       // Ref vers l'Object3D auquel attacher les sons
-  locomotion       // État de mouvement actuel ('idle', 'walk', 'run')
+export default function FootstepAudio({
+  audioListener,
+  stepSoundBuffers,
+  targetRef,
+  locomotion,
 }) {
   const { globalVolume } = useAudioContext();
-  const soundsRef = useRef([]); // Stocker les instances PositionalAudio
+  const soundPoolRef = useRef([]);
   const lastStepTime = useRef(0);
+  const nextVoiceRef = useRef(0);
+  const volumeRef = useRef(globalVolume);
 
-  // Effet pour créer/nettoyer les sons PositionalAudio
-  useEffect(() => {
+  const ensureSoundPool = useCallback(() => {
+    if (soundPoolRef.current.length > 0) return soundPoolRef.current;
     if (
-      targetRef?.current && 
-      audioListener && 
-      stepSoundBuffers?.current?.length > 0 && 
-      soundsRef.current.length === 0
+      !targetRef?.current ||
+      !audioListener ||
+      !stepSoundBuffers?.current?.length
     ) {
-      const targetObject = targetRef.current;
-      
-      const sounds = stepSoundBuffers.current.map(buffer => {
-        const sound = new THREE.PositionalAudio(audioListener);
-        sound.setBuffer(buffer);
-        sound.setRefDistance(1); 
-        sound.setRolloffFactor(1); 
-        // Appliquer le volume initial basé sur le contexte
-        sound.setVolume(BASE_FOOTSTEP_VOLUME * globalVolume);
-        targetObject.add(sound);
-        return sound;
-      });
-      soundsRef.current = sounds;
-      console.log(`FootstepAudio: PositionalAudio créé et attaché à ${targetObject.uuid}`);
+      return null;
     }
 
-    return () => {
-      if (soundsRef.current.length > 0) {
-        const targetObject = targetRef?.current;
-        console.log(`FootstepAudio: Nettoyage pour ${targetObject?.uuid}`);
-        soundsRef.current.forEach(sound => {
-          if (sound.isPlaying) {
-            sound.stop();
-          }
-          if (targetObject && sound.parent === targetObject) {
-            targetObject.remove(sound);
-          }
-        });
-        soundsRef.current = [];
-      }
-    };
-  }, [targetRef?.current, audioListener, stepSoundBuffers?.current]);
+    const target = targetRef.current;
+    for (let index = 0; index < FOOTSTEP_VOICE_COUNT; index += 1) {
+      const sound = new THREE.PositionalAudio(audioListener);
+      sound.setRefDistance(1);
+      sound.setRolloffFactor(1);
+      sound.setDistanceModel('inverse');
+      sound.setVolume(BASE_FOOTSTEP_VOLUME * volumeRef.current);
+      target.add(sound);
+      soundPoolRef.current.push(sound);
+    }
 
-  // Effet séparé pour mettre à jour le volume lorsque globalVolume change
+    return soundPoolRef.current;
+  }, [audioListener, stepSoundBuffers, targetRef]);
+
   useEffect(() => {
-    soundsRef.current.forEach(sound => {
-      if (sound.source) { // Vérifier si le son est prêt
-        sound.setVolume(BASE_FOOTSTEP_VOLUME * globalVolume);
-      }
+    volumeRef.current = globalVolume;
+    soundPoolRef.current.forEach((sound) => {
+      sound.setVolume(BASE_FOOTSTEP_VOLUME * globalVolume);
     });
   }, [globalVolume]);
 
-  // useFrame pour gérer la lecture des sons
+  useEffect(() => {
+    return () => {
+      soundPoolRef.current.forEach((sound) => {
+        if (sound.isPlaying) sound.stop();
+        sound.removeFromParent();
+        sound.disconnect();
+      });
+      soundPoolRef.current = [];
+    };
+  }, []);
+
   useFrame((state) => {
-    if (soundsRef.current.length === 0 || locomotion === 'idle') {
-      return;
-    }
+    if (locomotion !== 'walk' && locomotion !== 'run') return;
 
-    if (locomotion === 'walk' || locomotion === 'run') {
-      const currentTime = state.clock.elapsedTime;
-      const interval = locomotion === 'run' ? RUN_STEP_INTERVAL : WALK_STEP_INTERVAL;
+    const sounds = ensureSoundPool();
+    const buffers = stepSoundBuffers?.current;
+    if (!sounds?.length || !buffers?.length) return;
 
-      if (currentTime - lastStepTime.current >= interval) {
-        const randomIndex = Math.floor(Math.random() * soundsRef.current.length);
-        const soundToPlay = soundsRef.current[randomIndex];
-        
-        if (soundToPlay && !soundToPlay.isPlaying) {
-          if (targetRef?.current && soundToPlay.parent === targetRef.current) {
-            // Le volume est déjà réglé par l'effet sur globalVolume
-            soundToPlay.play();
-          } else {
-              console.warn("FootstepAudio: Tentative de jouer un son non attaché.");
-          }
-        }
-        lastStepTime.current = currentTime;
+    const currentTime = state.clock.elapsedTime;
+    const interval = locomotion === 'run'
+      ? RUN_STEP_INTERVAL
+      : WALK_STEP_INTERVAL;
+    if (currentTime - lastStepTime.current < interval) return;
+
+    lastStepTime.current = currentTime;
+    let sound = null;
+    for (let offset = 0; offset < sounds.length; offset += 1) {
+      const index = (nextVoiceRef.current + offset) % sounds.length;
+      if (!sounds[index].isPlaying) {
+        sound = sounds[index];
+        nextVoiceRef.current = (index + 1) % sounds.length;
+        break;
       }
     }
+    if (!sound) return;
+
+    const buffer = buffers[Math.floor(Math.random() * buffers.length)];
+    sound.setBuffer(buffer);
+    sound.play();
   });
 
   return null;
-} 
+}

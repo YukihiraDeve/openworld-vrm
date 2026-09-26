@@ -17,8 +17,10 @@ class MemoryManager {
     
     this.lastCleanup = 0;
     this.cleanupInterval = 30000; // 30 secondes
+    this.cleanupTimer = null;
     
-    // Surveiller les performances
+    // La qualité reste identique sur toutes les plateformes. Le mode mémoire
+    // réduite reste disponible uniquement via le moniteur de performance.
     this.isLowMemory = false;
     this.memoryThreshold = 0.8; // 80% de la mémoire utilisée
   }
@@ -226,6 +228,7 @@ class MemoryManager {
   // Nettoyer tout avant fermeture
   dispose() {
     console.log('[MemoryManager] Nettoyage complet');
+    this.stopAutoCleanup();
     
     // Disposer de tous les objets
     for (const disposable of this.disposables) {
@@ -254,21 +257,26 @@ class MemoryManager {
 
   // Démarrer le nettoyage automatique
   startAutoCleanup() {
-    setInterval(() => {
+    if (this.cleanupTimer !== null) return;
+
+    this.cleanupTimer = window.setInterval(() => {
       this.cleanup();
     }, this.cleanupInterval);
+  }
+
+  stopAutoCleanup() {
+    if (this.cleanupTimer === null) return;
+    window.clearInterval(this.cleanupTimer);
+    this.cleanupTimer = null;
   }
 }
 
 // Instance globale
 const memoryManager = new MemoryManager();
 
-// Démarrer le nettoyage automatique
-memoryManager.startAutoCleanup();
-
 // Nettoyer au déchargement de la page
 window.addEventListener('beforeunload', () => {
   memoryManager.dispose();
 });
 
-export default memoryManager; 
+export default memoryManager;
